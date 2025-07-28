@@ -171,15 +171,19 @@ struct SalieriScore {
         // Map time signature meta events
         if eventType == kMusicEventType_Meta, let data = eventData?.assumingMemoryBound(to: MIDIMetaEvent.self) {
             let meta = data.pointee
-            // Access tuple elements by index
-            let metaData = Mirror(reflecting: meta.data).children.map { $0.value as! UInt8 }
+            // Access tuple elements as a buffer of 32 bytes
+            var metaData = [UInt8](repeating: 0, count: 32)
+            withUnsafeBytes(of: meta.data) { rawBuf in
+                for i in 0..<min(32, rawBuf.count) {
+                    metaData[i] = rawBuf[i]
+                }
+            }
             if meta.metaEventType == 0x58, meta.dataLength >= 4 {
                 let num = Int(metaData[0])
                 let denom = Int(pow(2.0, Double(metaData[1])))
                 let ts = SalieriTimeSignature(numerator: num, denominator: denom)
                 return .timeSignature(ts)
             }
-            // Map key signature meta events
             if meta.metaEventType == 0x59, meta.dataLength >= 2 {
                 let fifths = Int(Int8(bitPattern: metaData[0]))
                 let mode = metaData[1] == 0 ? SalieriKeySignature.KeyMode.major : .minor
