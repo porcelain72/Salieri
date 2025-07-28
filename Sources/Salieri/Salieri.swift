@@ -178,18 +178,22 @@ struct SalieriScore {
                     metaData[i] = rawBuf[i]
                 }
             }
+            print("[DEBUG] metaEventType: \(meta.metaEventType), dataLength: \(meta.dataLength), metaData[0..4]:", metaData[0], metaData[1], metaData[2], metaData[3])
             if meta.metaEventType == 0x58, meta.dataLength >= 4 {
                 let num = Int(metaData[0])
                 let denom = Int(pow(2.0, Double(metaData[1])))
+                print("[DEBUG] Parsed time signature: num=\(num), denom=\(denom)")
                 let ts = SalieriTimeSignature(numerator: num, denominator: denom)
                 return .timeSignature(ts)
             }
             if meta.metaEventType == 0x59, meta.dataLength >= 2 {
                 let fifths = Int(Int8(bitPattern: metaData[0]))
                 let mode = metaData[1] == 0 ? SalieriKeySignature.KeyMode.major : .minor
+                print("[DEBUG] Parsed key signature: fifths=\(fifths), mode=\(mode)")
                 let ks = SalieriKeySignature(fifths: fifths, mode: mode)
                 return .keySignature(ks)
             }
+            print("[DEBUG] Meta event not parsed: type=\(meta.metaEventType), length=\(meta.dataLength)")
         }
         // TODO: Map clef (not in MIDI, can infer or set default)
         // TODO: Extend for other event types (barlines, tuplets, etc.)
@@ -390,9 +394,9 @@ class SalieriEngraver {
         var pages: [SalieriPage] = []
         let systemSpacing: CGFloat = 120.0
         let staffSpacing: CGFloat = 80.0
-        let measureWidth: CGFloat = 120.0
+        let measureWidth: CGFloat = 200.0 // Increased for better spacing
         let notesPerBeamGroup = 2 // Simple beaming: group every 2 eighth notes
-        let staffLineSpacing: CGFloat = config.staffSize * 2.0
+        let staffLineSpacing: CGFloat = config.staffSize * 1.5 // Reduced spacing
         let staffLines = 5
         let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
         var systemNumber = 1
@@ -407,7 +411,7 @@ class SalieriEngraver {
                 // Beaming: group notes for beaming
                 var beamGroup = 0
                 var beamCount = 0
-                // For now, layout all notes at equal spacing
+                // Calculate proper note spacing based on duration
                 let events: [SalieriNotehead] = measure.events.enumerated().compactMap { (eIdx, event) in
                     if case let .note(note) = event {
                         // Assign beam group
@@ -428,7 +432,9 @@ class SalieriEngraver {
                         let ledgerLines = ledgerLinesForPitch(note.pitch, clef: clef, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
                         // Stem direction (up for notes below middle line, down for above)
                         let stemDirection: SalieriStemDirection = y > staffHeight / 2 ? .up : .down
-                        return SalieriNotehead(note: note, x: CGFloat(eIdx) * 30.0, y: y, accidental: accidental, ledgerLines: ledgerLines, stemDirection: stemDirection, beamGroup: group)
+                        // Calculate horizontal position with proper spacing
+                        let xSpacing = calculateNoteSpacing(for: note, measureWidth: measureWidth, totalNotes: measure.events.count)
+                        return SalieriNotehead(note: note, x: xSpacing, y: y, accidental: accidental, ledgerLines: ledgerLines, stemDirection: stemDirection, beamGroup: group)
                     }
                     return nil
                 }
@@ -443,6 +449,26 @@ class SalieriEngraver {
         pages.append(page)
         return SalieriLayout(pages: pages)
     }
+    
+    // Helper: Calculate proper note spacing to prevent overprinting
+    private static func calculateNoteSpacing(for note: SalieriNote, measureWidth: CGFloat, totalNotes: Int) -> CGFloat {
+        // Use duration to determine spacing
+        let baseSpacing = measureWidth / CGFloat(max(totalNotes, 1))
+        let durationMultiplier: CGFloat
+        switch note.duration {
+        case .whole: durationMultiplier = 4.0
+        case .half: durationMultiplier = 2.0
+        case .quarter: durationMultiplier = 1.0
+        case .eighth: durationMultiplier = 0.5
+        case .sixteenth: durationMultiplier = 0.25
+        case .thirtySecond: durationMultiplier = 0.125
+        case .sixtyFourth: durationMultiplier = 0.0625
+        case .dotted(_, _): durationMultiplier = 1.5 // Approximate
+        case .custom(let v): durationMultiplier = CGFloat(v)
+        }
+        return baseSpacing * durationMultiplier
+    }
+    
     // Helper: Calculate vertical position for a pitch on the staff
     private static func yForPitch(_ pitch: SalieriPitch, clef: SalieriClef, staffLineSpacing: CGFloat, staffHeight: CGFloat) -> CGFloat {
         // For treble clef, C4 is one ledger line below staff
@@ -520,41 +546,71 @@ class SalieriPDFRenderer {
     }
     
     private static func drawStaff(_ staff: SalieriStaff, context: CGContext, config: SalieriConfiguration) {
-        let staffLineSpacing: CGFloat = config.staffSize * 2.0
+        let staffLineSpacing: CGFloat = config.staffSize * 1.5 // Match engraving spacing
         let staffLines = 5
         let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
         let yBase = staff.yPosition
+        
+        // Draw clef at the beginning of the staff
+        drawClef(staff.clef, at: CGPoint(x: config.margins.left + 20, y: yBase), context: context, config: config)
+        
         // Draw staff lines
         context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
         context.setLineWidth(1.0)
         for i in 0..<staffLines {
             let y = yBase + CGFloat(i) * staffLineSpacing
-            context.move(to: CGPoint(x: config.margins.left, y: y))
+            context.move(to: CGPoint(x: config.margins.left + 60, y: y)) // Start after clef
             context.addLine(to: CGPoint(x: config.pageSize.width - config.margins.right, y: y))
         }
         context.strokePath()
+        
         // Draw measures
         for measure in staff.measures {
             drawMeasure(measure, yBase: yBase, context: context, config: config)
         }
     }
     
+    private static func drawClef(_ clef: SalieriClef, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
+        let fontSize = config.staffSize * 3.0
+        let clefSymbol: String
+        
+        switch clef.type {
+        case .treble: clefSymbol = "𝄞"
+        case .bass: clefSymbol = "𝄢"
+        case .alto: clefSymbol = "𝄡"
+        case .tenor: clefSymbol = "𝄡"
+        case .percussion: clefSymbol = "𝄤"
+        case .other(_): clefSymbol = "𝄞" // Default to treble
+        }
+        
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: fontSize),
+            .foregroundColor: NSColor.black
+        ]
+        let attrStr = NSAttributedString(string: clefSymbol, attributes: attributes)
+        attrStr.draw(at: point)
+    }
+    
     private static func drawMeasure(_ measure: SalieriMeasureLayout, yBase: CGFloat, context: CGContext, config: SalieriConfiguration) {
         // Draw measure line at start
-        let xStart = config.margins.left + measure.xPosition
+        let xStart = config.margins.left + 60 + measure.xPosition // Account for clef space
         let xEnd = xStart + measure.width
-        let staffLineSpacing: CGFloat = config.staffSize * 2.0
+        let staffLineSpacing: CGFloat = config.staffSize * 1.5
         let staffLines = 5
         let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
+        
         context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
         context.setLineWidth(1.0)
         context.move(to: CGPoint(x: xStart, y: yBase))
         context.addLine(to: CGPoint(x: xStart, y: yBase + staffHeight))
         context.strokePath()
-        // Draw notes
-        for notehead in measure.events {
-            drawNotehead(notehead, xBase: xStart, yBase: yBase, context: context, config: config)
+        
+        // Draw notes with proper spacing
+        for (index, notehead) in measure.events.enumerated() {
+            let xOffset = CGFloat(index) * 40.0 // Fixed spacing between notes
+            drawNotehead(notehead, xBase: xStart + xOffset, yBase: yBase, context: context, config: config)
         }
+        
         // Draw measure line at end
         context.move(to: CGPoint(x: xEnd, y: yBase))
         context.addLine(to: CGPoint(x: xEnd, y: yBase + staffHeight))
@@ -562,16 +618,20 @@ class SalieriPDFRenderer {
     }
     
     private static func drawNotehead(_ notehead: SalieriNotehead, xBase: CGFloat, yBase: CGFloat, context: CGContext, config: SalieriConfiguration) {
-        // Draw notehead as ellipse
-        let noteRadius = config.staffSize
-        let x = xBase + notehead.x
+        // Draw notehead as ellipse with proper scaling
+        let noteRadius = config.staffSize * 0.8 // Smaller noteheads
+        let x = xBase
         let y = yBase + notehead.y
         let noteRect = CGRect(x: x - noteRadius, y: y - noteRadius, width: noteRadius * 2, height: noteRadius * 1.5)
+        
         context.setFillColor(CGColor(gray: 0, alpha: 1.0))
         context.fillEllipse(in: noteRect)
-        // Draw stem
-        let stemLength = config.staffSize * 5
+        
+        // Draw stem with proper length
+        let stemLength = config.staffSize * 3.5
         context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
+        context.setLineWidth(1.0)
+        
         if notehead.stemDirection == .up {
             context.move(to: CGPoint(x: x + noteRadius, y: y))
             context.addLine(to: CGPoint(x: x + noteRadius, y: y - stemLength))
@@ -580,25 +640,28 @@ class SalieriPDFRenderer {
             context.addLine(to: CGPoint(x: x - noteRadius, y: y + stemLength))
         }
         context.strokePath()
-        // Draw accidentals (as text for now)
+        
+        // Draw accidentals with proper positioning
         if let accidental = notehead.accidental {
             let accidentalString = accidentalSymbol(accidental)
-            let fontSize = config.staffSize * 1.5
+            let fontSize = config.staffSize * 1.2
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: fontSize),
                 .foregroundColor: NSColor.black
             ]
             let attrStr = NSAttributedString(string: accidentalString, attributes: attributes)
-            let textPoint = CGPoint(x: x - noteRadius * 2.5, y: y - noteRadius)
+            let textPoint = CGPoint(x: x - noteRadius * 2.0, y: y - noteRadius * 0.5)
             attrStr.draw(at: textPoint)
         }
-        // Draw ledger lines
+        
+        // Draw ledger lines with proper positioning
+        context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
+        context.setLineWidth(1.0)
         for ledger in notehead.ledgerLines {
-            context.move(to: CGPoint(x: x - noteRadius * 1.5, y: yBase + ledger.y))
-            context.addLine(to: CGPoint(x: x + noteRadius * 1.5, y: yBase + ledger.y))
+            context.move(to: CGPoint(x: x - noteRadius * 1.2, y: yBase + ledger.y))
+            context.addLine(to: CGPoint(x: x + noteRadius * 1.2, y: yBase + ledger.y))
         }
         context.strokePath()
-        // TODO: Draw beams, ties, slurs, articulations, etc.
     }
     
     private static func accidentalSymbol(_ accidental: SalieriAccidental) -> String {

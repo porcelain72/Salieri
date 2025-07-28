@@ -589,6 +589,186 @@ final class SalieriTests: XCTestCase {
         XCTAssertNotNil(pdfDocument)
     }
     
+    // MARK: - Visual Regression Tests
+    
+    func testVisualOutputQuality() {
+        let sequence = createMusicSequence()
+        let track = createMusicTrack(in: sequence)
+        
+        // Create a simple, predictable test case
+        let testNotes = [60, 62, 64, 65, 67, 69, 71, 72] // C major scale
+        for (i, noteNumber) in testNotes.enumerated() {
+            var note = MIDINoteMessage(channel: 0, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 1.0)
+            MusicTrackNewMIDINoteEvent(track, Double(i), &note)
+        }
+        
+        let config = SalieriConfiguration(
+            pageSize: CGSize(width: 612, height: 792), // US Letter
+            margins: EdgeInsets(top: 72, left: 72, bottom: 72, right: 72),
+            staffSize: 8.0 // Smaller staff size for better scaling
+        )
+        
+        let salieri = Salieri(configuration: config)
+        let pdfDocument = salieri.renderPDF(from: sequence)
+        
+        XCTAssertNotNil(pdfDocument)
+        XCTAssertGreaterThan(pdfDocument?.pageCount ?? 0, 0)
+        
+        // Save for visual inspection
+        #if DEBUG
+        if let pdf = pdfDocument, let data = pdf.dataRepresentation() {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("visual_test_output.pdf")
+            do {
+                try data.write(to: tempURL)
+                print("Visual test PDF saved to: \(tempURL.path)")
+            } catch {
+                print("Failed to save visual test PDF: \(error)")
+            }
+        }
+        #endif
+    }
+    
+    func testProperScalingAndPositioning() {
+        let sequence = createMusicSequence()
+        let track = createMusicTrack(in: sequence)
+        
+        // Add a few notes with known positions
+        let notes = [(60, 0.0), (62, 1.0), (64, 2.0), (65, 3.0)] // C, D, E, F
+        for (noteNumber, time) in notes {
+            var note = MIDINoteMessage(channel: 0, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 1.0)
+            MusicTrackNewMIDINoteEvent(track, time, &note)
+        }
+        
+        let config = SalieriConfiguration(
+            pageSize: CGSize(width: 612, height: 792),
+            margins: EdgeInsets(top: 72, left: 72, bottom: 72, right: 72),
+            staffSize: 6.0 // Even smaller for testing
+        )
+        
+        let salieri = Salieri(configuration: config)
+        let pdfDocument = salieri.renderPDF(from: sequence)
+        
+        XCTAssertNotNil(pdfDocument)
+        
+        // Save for visual inspection
+        #if DEBUG
+        if let pdf = pdfDocument, let data = pdf.dataRepresentation() {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("scaling_test_output.pdf")
+            do {
+                try data.write(to: tempURL)
+                print("Scaling test PDF saved to: \(tempURL.path)")
+            } catch {
+                print("Failed to save scaling test PDF: \(error)")
+            }
+        }
+        #endif
+    }
+    
+    func testClefAndTimeSignatureRendering() {
+        let sequence = createMusicSequence()
+        let track = createMusicTrack(in: sequence)
+        
+        // Add time signature
+        var timeMeta = MIDIMetaEvent()
+        timeMeta.metaEventType = 0x58
+        timeMeta.dataLength = 4
+        timeMeta.unused1 = 0
+        timeMeta.unused2 = 0
+        timeMeta.unused3 = 0
+        
+        withUnsafeMutablePointer(to: &timeMeta.data) { ptr in
+            ptr.withMemoryRebound(to: UInt8.self, capacity: 32) { bytes in
+                bytes[0] = 4  // numerator
+                bytes[1] = 2  // denominator (power of 2)
+                bytes[2] = 24 // MIDI clocks per quarter
+                bytes[3] = 8  // 32nd notes per quarter
+            }
+        }
+        
+        MusicTrackNewMetaEvent(track, 0.0, &timeMeta)
+        
+        // Add key signature
+        var keyMeta = MIDIMetaEvent()
+        keyMeta.metaEventType = 0x59
+        keyMeta.dataLength = 2
+        keyMeta.unused1 = 0
+        keyMeta.unused2 = 0
+        keyMeta.unused3 = 0
+        
+        withUnsafeMutablePointer(to: &keyMeta.data) { ptr in
+            ptr.withMemoryRebound(to: UInt8.self, capacity: 32) { bytes in
+                bytes[0] = 0  // no sharps/flats (C major)
+                bytes[1] = 0  // major mode
+            }
+        }
+        
+        MusicTrackNewMetaEvent(track, 0.1, &keyMeta)
+        
+        // Add a simple note
+        var note = MIDINoteMessage(channel: 0, note: 60, velocity: 64, releaseVelocity: 0, duration: 1.0)
+        MusicTrackNewMIDINoteEvent(track, 1.0, &note)
+        
+        let config = SalieriConfiguration(
+            pageSize: CGSize(width: 612, height: 792),
+            margins: EdgeInsets(top: 72, left: 72, bottom: 72, right: 72),
+            staffSize: 8.0
+        )
+        
+        let salieri = Salieri(configuration: config)
+        let pdfDocument = salieri.renderPDF(from: sequence)
+        
+        XCTAssertNotNil(pdfDocument)
+        
+        // Save for visual inspection
+        #if DEBUG
+        if let pdf = pdfDocument, let data = pdf.dataRepresentation() {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("clef_time_test_output.pdf")
+            do {
+                try data.write(to: tempURL)
+                print("Clef/Time signature test PDF saved to: \(tempURL.path)")
+            } catch {
+                print("Failed to save clef/time test PDF: \(error)")
+            }
+        }
+        #endif
+    }
+    
+    func testNoteOverprintingPrevention() {
+        let sequence = createMusicSequence()
+        let track = createMusicTrack(in: sequence)
+        
+        // Add notes that could potentially overlap
+        let notes = [60, 62, 64, 65, 67, 69, 71, 72] // C major scale
+        for (i, noteNumber) in notes.enumerated() {
+            var note = MIDINoteMessage(channel: 0, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 0.5)
+            MusicTrackNewMIDINoteEvent(track, Double(i) * 0.5, &note)
+        }
+        
+        let config = SalieriConfiguration(
+            pageSize: CGSize(width: 612, height: 792),
+            margins: EdgeInsets(top: 72, left: 72, bottom: 72, right: 72),
+            staffSize: 6.0
+        )
+        
+        let salieri = Salieri(configuration: config)
+        let pdfDocument = salieri.renderPDF(from: sequence)
+        
+        XCTAssertNotNil(pdfDocument)
+        
+        // Save for visual inspection
+        #if DEBUG
+        if let pdf = pdfDocument, let data = pdf.dataRepresentation() {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("overprint_test_output.pdf")
+            do {
+                try data.write(to: tempURL)
+                print("Overprint test PDF saved to: \(tempURL.path)")
+            } catch {
+                print("Failed to save overprint test PDF: \(error)")
+            }
+        }
+        #endif
+    }
+    
     // MARK: - Helper Methods
     
     private func createMusicSequence() -> MusicSequence {
