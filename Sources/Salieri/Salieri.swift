@@ -453,12 +453,141 @@ class SalieriEngraver {
     }
 }
 
-// MARK: - PDF Rendering (Stub)
+// MARK: - PDF Rendering
 
 class SalieriPDFRenderer {
     static func render(layout: SalieriLayout, config: SalieriConfiguration) -> PDFDocument? {
-        // TODO: Implement PDF rendering
-        return PDFDocument()
+        let pdfDoc = PDFDocument()
+        for (pageIdx, page) in layout.pages.enumerated() {
+            let pageRect = CGRect(origin: .zero, size: config.pageSize)
+            let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+            let data = renderer.pdfData { ctx in
+                ctx.beginPage()
+                let cgContext = ctx.cgContext
+                // Flip context for correct orientation
+                cgContext.saveGState()
+                cgContext.translateBy(x: 0, y: config.pageSize.height)
+                cgContext.scaleBy(x: 1, y: -1)
+                // Draw page margin
+                drawPageMargin(context: cgContext, rect: pageRect, margins: config.margins)
+                // Draw each system
+                for system in page.systems {
+                    drawSystem(system, context: cgContext, config: config)
+                }
+                cgContext.restoreGState()
+            }
+            if let pdfPage = PDFPage(data: data) {
+                pdfDoc.insert(pdfPage, at: pageIdx)
+            }
+        }
+        return pdfDoc
+    }
+    
+    private static func drawPageMargin(context: CGContext, rect: CGRect, margins: UIEdgeInsets) {
+        context.setStrokeColor(UIColor.lightGray.cgColor)
+        context.setLineWidth(1.0)
+        let marginRect = CGRect(x: margins.left, y: margins.bottom, width: rect.width - margins.left - margins.right, height: rect.height - margins.top - margins.bottom)
+        context.stroke(marginRect)
+    }
+    
+    private static func drawSystem(_ system: SalieriSystem, context: CGContext, config: SalieriConfiguration) {
+        for staff in system.staves {
+            drawStaff(staff, context: context, config: config)
+        }
+    }
+    
+    private static func drawStaff(_ staff: SalieriStaff, context: CGContext, config: SalieriConfiguration) {
+        let staffLineSpacing: CGFloat = config.staffSize * 2.0
+        let staffLines = 5
+        let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
+        let yBase = staff.yPosition
+        // Draw staff lines
+        context.setStrokeColor(UIColor.black.cgColor)
+        context.setLineWidth(1.0)
+        for i in 0..<staffLines {
+            let y = yBase + CGFloat(i) * staffLineSpacing
+            context.move(to: CGPoint(x: config.margins.left, y: y))
+            context.addLine(to: CGPoint(x: config.pageSize.width - config.margins.right, y: y))
+        }
+        context.strokePath()
+        // Draw measures
+        for measure in staff.measures {
+            drawMeasure(measure, yBase: yBase, context: context, config: config)
+        }
+    }
+    
+    private static func drawMeasure(_ measure: SalieriMeasureLayout, yBase: CGFloat, context: CGContext, config: SalieriConfiguration) {
+        // Draw measure line at start
+        let xStart = config.margins.left + measure.xPosition
+        let xEnd = xStart + measure.width
+        let staffLineSpacing: CGFloat = config.staffSize * 2.0
+        let staffLines = 5
+        let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
+        context.setStrokeColor(UIColor.black.cgColor)
+        context.setLineWidth(1.0)
+        context.move(to: CGPoint(x: xStart, y: yBase))
+        context.addLine(to: CGPoint(x: xStart, y: yBase + staffHeight))
+        context.strokePath()
+        // Draw notes
+        for notehead in measure.events {
+            drawNotehead(notehead, xBase: xStart, yBase: yBase, context: context, config: config)
+        }
+        // Draw measure line at end
+        context.move(to: CGPoint(x: xEnd, y: yBase))
+        context.addLine(to: CGPoint(x: xEnd, y: yBase + staffHeight))
+        context.strokePath()
+    }
+    
+    private static func drawNotehead(_ notehead: SalieriNotehead, xBase: CGFloat, yBase: CGFloat, context: CGContext, config: SalieriConfiguration) {
+        // Draw notehead as ellipse
+        let noteRadius = config.staffSize
+        let x = xBase + notehead.x
+        let y = yBase + notehead.y
+        let noteRect = CGRect(x: x - noteRadius, y: y - noteRadius, width: noteRadius * 2, height: noteRadius * 1.5)
+        context.setFillColor(UIColor.black.cgColor)
+        context.fillEllipse(in: noteRect)
+        // Draw stem
+        let stemLength = config.staffSize * 5
+        if notehead.stemDirection == .up {
+            context.move(to: CGPoint(x: x + noteRadius, y: y))
+            context.addLine(to: CGPoint(x: x + noteRadius, y: y - stemLength))
+        } else {
+            context.move(to: CGPoint(x: x - noteRadius, y: y))
+            context.addLine(to: CGPoint(x: x - noteRadius, y: y + stemLength))
+        }
+        context.strokePath()
+        // Draw accidentals (as text for now)
+        if let accidental = notehead.accidental {
+            let accidentalString = accidentalSymbol(accidental)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: config.staffSize * 1.5),
+                .foregroundColor: UIColor.black
+            ]
+            let attrStr = NSAttributedString(string: accidentalString, attributes: attributes)
+            attrStr.draw(at: CGPoint(x: x - noteRadius * 2.5, y: y - noteRadius))
+        }
+        // Draw ledger lines
+        for ledger in notehead.ledgerLines {
+            context.move(to: CGPoint(x: x - noteRadius * 1.5, y: yBase + ledger.y))
+            context.addLine(to: CGPoint(x: x + noteRadius * 1.5, y: yBase + ledger.y))
+        }
+        context.strokePath()
+        // TODO: Draw beams, ties, slurs, articulations, etc.
+    }
+    
+    private static func accidentalSymbol(_ accidental: SalieriAccidental) -> String {
+        switch accidental {
+        case .sharp: return "♯"
+        case .flat: return "♭"
+        case .natural: return "♮"
+        case .doubleSharp: return "𝄪"
+        case .doubleFlat: return "𝄫"
+        case .quarterSharp: return "𝄲" // Placeholder
+        case .quarterFlat: return "𝄳" // Placeholder
+        case .threeQuarterSharp: return "𝄴" // Placeholder
+        case .threeQuarterFlat: return "𝄵" // Placeholder
+        case .other(let s): return s
+        }
     }
 }
 
