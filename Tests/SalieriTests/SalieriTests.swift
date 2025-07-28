@@ -32,13 +32,13 @@ final class SalieriTests: XCTestCase {
         // Add time signature meta event (3/4)
         var meta = MIDIMetaEvent(
             metaEventType: 0x58, unused1: 0, unused2: 0, unused3: 0, dataLength: 4,
-            data: (3, 2, 24, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+            data: (UInt8(3), UInt8(2), UInt8(24), UInt8(8), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0))
         )
         MusicTrackNewMetaEvent(trk, 0.0, &meta)
         // Add key signature meta event (2 sharps, major)
         var meta2 = MIDIMetaEvent(
             metaEventType: 0x59, unused1: 0, unused2: 0, unused3: 0, dataLength: 2,
-            data: (2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+            data: (UInt8(2), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0))
         )
         MusicTrackNewMetaEvent(trk, 0.0, &meta2)
         let score = SalieriScore.from(sequence: seq)
