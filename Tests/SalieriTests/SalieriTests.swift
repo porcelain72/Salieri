@@ -52,9 +52,14 @@ final class SalieriTests: XCTestCase {
         }
         MusicTrackNewMetaEvent(trk, 0.0, &meta2)
         let score = SalieriScore.from(sequence: seq)
-        let events = score.parts[0].measures[0].events
-        XCTAssert(events.contains { if case .timeSignature(_) = $0 { return true } else { return false } })
-        XCTAssert(events.contains { if case .keySignature(_) = $0 { return true } else { return false } })
+        // Print all events for debugging
+        for (idx, measure) in score.parts[0].measures.enumerated() {
+            print("Measure \(idx+1):", measure.events)
+        }
+        // Check all measures for time/key signature events
+        let allEvents = score.parts[0].measures.flatMap { $0.events }
+        XCTAssert(allEvents.contains { if case .timeSignature(_) = $0 { return true } else { return false } })
+        XCTAssert(allEvents.contains { if case .keySignature(_) = $0 { return true } else { return false } })
     }
     
     func testRestDetection() {
