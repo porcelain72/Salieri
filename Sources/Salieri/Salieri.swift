@@ -3,17 +3,28 @@ import CoreGraphics
 import PDFKit
 import AudioToolbox
 
+// MARK: - Cross-platform EdgeInsets
+public struct EdgeInsets: Equatable {
+    public var top: CGFloat
+    public var left: CGFloat
+    public var bottom: CGFloat
+    public var right: CGFloat
+    public init(top: CGFloat, left: CGFloat, bottom: CGFloat, right: CGFloat) {
+        self.top = top; self.left = left; self.bottom = bottom; self.right = right
+    }
+}
+
 // MARK: - Salieri Public API
 
 public struct SalieriConfiguration {
     public var pageSize: CGSize
-    public var margins: UIEdgeInsets
+    public var margins: EdgeInsets
     public var staffSize: CGFloat
     public var renderParts: Bool
     public var renderFullScore: Bool
     
     public init(pageSize: CGSize = CGSize(width: 595.2, height: 841.8), // A4 default
-                margins: UIEdgeInsets = UIEdgeInsets(top: 40, left: 40, bottom: 40, right: 40),
+                margins: EdgeInsets = EdgeInsets(top: 40, left: 40, bottom: 40, right: 40),
                 staffSize: CGFloat = 7.0,
                 renderParts: Bool = false,
                 renderFullScore: Bool = true) {
@@ -160,16 +171,18 @@ struct SalieriScore {
         // Map time signature meta events
         if eventType == kMusicEventType_Meta, let data = eventData?.assumingMemoryBound(to: MIDIMetaEvent.self) {
             let meta = data.pointee
+            // Access tuple elements by index
+            let metaData = Mirror(reflecting: meta.data).children.map { $0.value as! UInt8 }
             if meta.metaEventType == 0x58, meta.dataLength >= 4 {
-                let num = Int(meta.data.0)
-                let denom = Int(pow(2.0, Double(meta.data.1)))
+                let num = Int(metaData[0])
+                let denom = Int(pow(2.0, Double(metaData[1])))
                 let ts = SalieriTimeSignature(numerator: num, denominator: denom)
                 return .timeSignature(ts)
             }
             // Map key signature meta events
             if meta.metaEventType == 0x59, meta.dataLength >= 2 {
-                let fifths = Int(Int8(bitPattern: meta.data.0))
-                let mode = meta.data.1 == 0 ? SalieriKeySignature.KeyMode.major : .minor
+                let fifths = Int(Int8(bitPattern: metaData[0]))
+                let mode = metaData[1] == 0 ? SalieriKeySignature.KeyMode.major : .minor
                 let ks = SalieriKeySignature(fifths: fifths, mode: mode)
                 return .keySignature(ks)
             }
@@ -244,7 +257,7 @@ enum SalieriEvent {
     // Add more as needed (barlines, tuplets, etc.)
 }
 
-struct SalieriNote {
+struct SalieriNote: Equatable {
     var pitch: SalieriPitch
     var duration: SalieriDuration
     var accidental: SalieriAccidental?
@@ -254,7 +267,7 @@ struct SalieriNote {
     // Add articulations, ties, etc. as needed
 }
 
-struct SalieriRest {
+struct SalieriRest: Equatable {
     var duration: SalieriDuration
 }
 
@@ -277,28 +290,37 @@ struct SalieriTimeSignature {
 
 // MARK: - Supporting Types
 
-struct SalieriPitch {
+struct SalieriPitch: Equatable {
     var step: Step
     var octave: Int
     var alter: Double? // For microtonal (e.g., quarter-sharp = 0.5)
     
-    enum Step: String { case C, D, E, F, G, A, B }
+    enum Step: String, Equatable { case C, D, E, F, G, A, B }
 }
 
-enum SalieriAccidental {
+enum SalieriAccidental: Equatable {
     case sharp, flat, natural, doubleSharp, doubleFlat
     case quarterSharp, quarterFlat, threeQuarterSharp, threeQuarterFlat
     case other(String) // For future microtonal support
 }
 
-enum SalieriDuration {
+indirect enum SalieriDuration: Equatable {
     case whole, half, quarter, eighth, sixteenth, thirtySecond, sixtyFourth
     case dotted(base: SalieriDuration, dots: Int)
     case custom(Double) // Fraction of whole note
+    
+    static func ==(lhs: SalieriDuration, rhs: SalieriDuration) -> Bool {
+        switch (lhs, rhs) {
+        case (.whole, .whole), (.half, .half), (.quarter, .quarter), (.eighth, .eighth), (.sixteenth, .sixteenth), (.thirtySecond, .thirtySecond), (.sixtyFourth, .sixtyFourth): return true
+        case let (.dotted(b1, d1), .dotted(b2, d2)): return b1 == b2 && d1 == d2
+        case let (.custom(v1), .custom(v2)): return v1 == v2
+        default: return false
+        }
+    }
 }
 
-enum SalieriStemDirection { case up, down, unspecified }
-enum SalieriBeamType { case begin, continueBeam, end, none }
+enum SalieriStemDirection: Equatable { case up, down, unspecified }
+enum SalieriBeamType: Equatable { case begin, continueBeam, end, none }
 
 // MARK: - Engraving/Layout Model
 
@@ -457,34 +479,31 @@ class SalieriEngraver {
 
 class SalieriPDFRenderer {
     static func render(layout: SalieriLayout, config: SalieriConfiguration) -> PDFDocument? {
-        let pdfDoc = PDFDocument()
-        for (pageIdx, page) in layout.pages.enumerated() {
-            let pageRect = CGRect(origin: .zero, size: config.pageSize)
-            let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
-            let data = renderer.pdfData { ctx in
-                ctx.beginPage()
-                let cgContext = ctx.cgContext
-                // Flip context for correct orientation
-                cgContext.saveGState()
-                cgContext.translateBy(x: 0, y: config.pageSize.height)
-                cgContext.scaleBy(x: 1, y: -1)
-                // Draw page margin
-                drawPageMargin(context: cgContext, rect: pageRect, margins: config.margins)
-                // Draw each system
-                for system in page.systems {
-                    drawSystem(system, context: cgContext, config: config)
-                }
-                cgContext.restoreGState()
+        let pdfData = NSMutableData()
+        let consumer = CGDataConsumer(data: pdfData as CFMutableData)!
+        var mediaBox = CGRect(origin: .zero, size: config.pageSize)
+        guard let pdfContext = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else { return nil }
+        for page in layout.pages {
+            pdfContext.beginPage(mediaBox: &mediaBox)
+            // Flip context for correct orientation
+            pdfContext.saveGState()
+            pdfContext.translateBy(x: 0, y: config.pageSize.height)
+            pdfContext.scaleBy(x: 1, y: -1)
+            // Draw page margin
+            drawPageMargin(context: pdfContext, rect: mediaBox, margins: config.margins)
+            // Draw each system
+            for system in page.systems {
+                drawSystem(system, context: pdfContext, config: config)
             }
-            if let pdfPage = PDFPage(data: data) {
-                pdfDoc.insert(pdfPage, at: pageIdx)
-            }
+            pdfContext.restoreGState()
+            pdfContext.endPage()
         }
-        return pdfDoc
+        pdfContext.closePDF()
+        return PDFDocument(data: pdfData as Data)
     }
     
-    private static func drawPageMargin(context: CGContext, rect: CGRect, margins: UIEdgeInsets) {
-        context.setStrokeColor(UIColor.lightGray.cgColor)
+    private static func drawPageMargin(context: CGContext, rect: CGRect, margins: EdgeInsets) {
+        context.setStrokeColor(CGColor(gray: 0.8, alpha: 1.0))
         context.setLineWidth(1.0)
         let marginRect = CGRect(x: margins.left, y: margins.bottom, width: rect.width - margins.left - margins.right, height: rect.height - margins.top - margins.bottom)
         context.stroke(marginRect)
@@ -502,7 +521,7 @@ class SalieriPDFRenderer {
         let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
         let yBase = staff.yPosition
         // Draw staff lines
-        context.setStrokeColor(UIColor.black.cgColor)
+        context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
         context.setLineWidth(1.0)
         for i in 0..<staffLines {
             let y = yBase + CGFloat(i) * staffLineSpacing
@@ -523,7 +542,7 @@ class SalieriPDFRenderer {
         let staffLineSpacing: CGFloat = config.staffSize * 2.0
         let staffLines = 5
         let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
-        context.setStrokeColor(UIColor.black.cgColor)
+        context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
         context.setLineWidth(1.0)
         context.move(to: CGPoint(x: xStart, y: yBase))
         context.addLine(to: CGPoint(x: xStart, y: yBase + staffHeight))
@@ -544,10 +563,11 @@ class SalieriPDFRenderer {
         let x = xBase + notehead.x
         let y = yBase + notehead.y
         let noteRect = CGRect(x: x - noteRadius, y: y - noteRadius, width: noteRadius * 2, height: noteRadius * 1.5)
-        context.setFillColor(UIColor.black.cgColor)
+        context.setFillColor(CGColor(gray: 0, alpha: 1.0))
         context.fillEllipse(in: noteRect)
         // Draw stem
         let stemLength = config.staffSize * 5
+        context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
         if notehead.stemDirection == .up {
             context.move(to: CGPoint(x: x + noteRadius, y: y))
             context.addLine(to: CGPoint(x: x + noteRadius, y: y - stemLength))
@@ -559,12 +579,14 @@ class SalieriPDFRenderer {
         // Draw accidentals (as text for now)
         if let accidental = notehead.accidental {
             let accidentalString = accidentalSymbol(accidental)
+            let fontSize = config.staffSize * 1.5
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: config.staffSize * 1.5),
-                .foregroundColor: UIColor.black
+                .font: NSFont.systemFont(ofSize: fontSize),
+                .foregroundColor: NSColor.black
             ]
             let attrStr = NSAttributedString(string: accidentalString, attributes: attributes)
-            attrStr.draw(at: CGPoint(x: x - noteRadius * 2.5, y: y - noteRadius))
+            let textPoint = CGPoint(x: x - noteRadius * 2.5, y: y - noteRadius)
+            attrStr.draw(at: textPoint)
         }
         // Draw ledger lines
         for ledger in notehead.ledgerLines {
