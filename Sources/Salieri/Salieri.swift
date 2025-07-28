@@ -57,8 +57,34 @@ struct SalieriScore {
     var isFullScore: Bool
     
     static func from(sequence: MusicSequence) -> SalieriScore {
-        // TODO: Implement parsing
-        return SalieriScore(title: nil, parts: [], isFullScore: true)
+        // 1. Extract tracks from MusicSequence
+        var tracks: [MusicTrack] = []
+        var trackCount: UInt32 = 0
+        MusicSequenceGetTrackCount(sequence, &trackCount)
+        for i in 0..<trackCount {
+            var track: MusicTrack?
+            MusicSequenceGetIndTrack(sequence, i, &track)
+            if let t = track { tracks.append(t) }
+        }
+        
+        // 2. For each track, create a SalieriPart
+        let parts: [SalieriPart] = tracks.enumerated().map { (idx, track) in
+            // TODO: Extract part name, instrument, etc.
+            let measures = SalieriScore.parseMeasures(from: track)
+            return SalieriPart(name: "Part \(idx+1)", measures: measures)
+        }
+        
+        // 3. Return SalieriScore
+        return SalieriScore(title: nil, parts: parts, isFullScore: true)
+    }
+    
+    private static func parseMeasures(from track: MusicTrack) -> [SalieriMeasure] {
+        // TODO: Extract events from track, group into measures
+        // 1. Iterate over events in the track
+        // 2. Map events to SalieriEvent (note, rest, clef, etc.)
+        // 3. Group events by measure (using time signature and tick position)
+        // 4. Return array of SalieriMeasure
+        return []
     }
 }
 
@@ -164,7 +190,16 @@ class SalieriPDFRenderer {
 
 class SalieriMIDIParser {
     static func parseMIDIFile(at url: URL) -> MusicSequence? {
-        // TODO: Implement MIDI file parsing to MusicSequence
+        // 1. Create a new MusicSequence
+        var sequence: MusicSequence? = nil
+        NewMusicSequence(&sequence)
+        // 2. Load MIDI file into sequence
+        if let seq = sequence {
+            let status = MusicSequenceFileLoad(seq, url as CFURL, .midiType, MusicSequenceLoadFlags())
+            if status == noErr {
+                return seq
+            }
+        }
         return nil
     }
 }
