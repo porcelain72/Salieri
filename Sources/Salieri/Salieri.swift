@@ -80,19 +80,18 @@ struct SalieriScore {
     
     private static func parseMeasures(from track: MusicTrack) -> [SalieriMeasure] {
         var measures: [SalieriMeasure] = []
-        // 1. Create event iterator
         var iterator: MusicEventIterator? = nil
         NewMusicEventIterator(track, &iterator)
         guard let eventIterator = iterator else { return measures }
         defer { DisposeMusicEventIterator(eventIterator) }
         
-        // 2. Prepare measure grouping
         var currentMeasureNumber = 1
         var currentEvents: [SalieriEvent] = []
-        var currentTimeSignature = SalieriTimeSignature(numerator: 4, denominator: 4) // Default, update as found
+        var currentTimeSignature = SalieriTimeSignature(numerator: 4, denominator: 4)
         var currentMeasureStartBeat: MusicTimeStamp = 0.0
         let beatsPerMeasure = { (ts: SalieriTimeSignature) in Double(ts.numerator) }
         
+        var lastNoteEnd: MusicTimeStamp = 0.0
         var hasEvent: DarwinBoolean = false
         MusicEventIteratorHasCurrentEvent(eventIterator, &hasEvent)
         while hasEvent.boolValue {
@@ -102,12 +101,20 @@ struct SalieriScore {
             var eventDataSize: UInt32 = 0
             MusicEventIteratorGetEventInfo(eventIterator, &timeStamp, &eventType, &eventData, &eventDataSize)
             
-            // 3. Map event to SalieriEvent
+            // Detect rests (gap between last note end and this event's start)
+            if timeStamp > lastNoteEnd {
+                let restDuration = timeStamp - lastNoteEnd
+                if restDuration > 0.0 {
+                    let rest = SalieriRest(duration: .custom(restDuration))
+                    currentEvents.append(.rest(rest))
+                }
+            }
+            
+            // Map event to SalieriEvent
             if let event = mapEvent(eventType: eventType, eventData: eventData, timeStamp: timeStamp) {
                 // Check if event crosses measure boundary
                 let beatInMeasure = timeStamp - currentMeasureStartBeat
                 if beatInMeasure >= beatsPerMeasure(currentTimeSignature) {
-                    // Close current measure and start new
                     measures.append(SalieriMeasure(number: currentMeasureNumber, events: currentEvents))
                     currentMeasureNumber += 1
                     currentEvents = []
@@ -118,12 +125,15 @@ struct SalieriScore {
                 if case let .timeSignature(ts) = event {
                     currentTimeSignature = ts
                 }
+                // Track note end for rest detection
+                if case let .note(note) = event {
+                    lastNoteEnd = timeStamp + note.duration.fractionOfWhole
+                }
             }
             
             MusicEventIteratorNextEvent(eventIterator)
             MusicEventIteratorHasCurrentEvent(eventIterator, &hasEvent)
         }
-        // Add last measure
         if !currentEvents.isEmpty {
             measures.append(SalieriMeasure(number: currentMeasureNumber, events: currentEvents))
         }
@@ -133,20 +143,84 @@ struct SalieriScore {
     private static func mapEvent(eventType: MusicEventType, eventData: UnsafeRawPointer?, timeStamp: MusicTimeStamp) -> SalieriEvent? {
         // Map MIDI note events
         if eventType == kMusicEventType_MIDINoteMessage, let data = eventData?.assumingMemoryBound(to: MIDINoteMessage.self) {
+            let midiNote = data.pointee
+            let (step, octave, alter) = midiNoteToPitch(midiNote: midiNote.note)
+            let duration = SalieriDuration.custom(Double(midiNote.duration))
+            let accidental = alterToAccidental(alter)
             let note = SalieriNote(
-                pitch: SalieriPitch(step: .C, octave: 4, alter: nil), // TODO: Map from MIDI note
-                duration: .quarter, // TODO: Map from MIDINoteMessage.duration
-                accidental: nil, // TODO: Map from pitch/modifiers
+                pitch: SalieriPitch(step: step, octave: octave, alter: alter),
+                duration: duration,
+                accidental: accidental,
                 stemDirection: nil,
                 beamType: nil,
                 isChord: false
             )
             return .note(note)
         }
-        // Map meta events (time signature, key signature, etc.)
-        // TODO: Implement mapping for clef, key signature, time signature
-        // TODO: Detect rests by gaps between notes
+        // Map time signature meta events
+        if eventType == kMusicEventType_Meta, let data = eventData?.assumingMemoryBound(to: MIDIMetaEvent.self) {
+            let meta = data.pointee
+            if meta.metaEventType == 0x58, meta.dataLength >= 4 {
+                let num = Int(meta.data.0)
+                let denom = Int(pow(2.0, Double(meta.data.1)))
+                let ts = SalieriTimeSignature(numerator: num, denominator: denom)
+                return .timeSignature(ts)
+            }
+            // Map key signature meta events
+            if meta.metaEventType == 0x59, meta.dataLength >= 2 {
+                let fifths = Int(Int8(bitPattern: meta.data.0))
+                let mode = meta.data.1 == 0 ? SalieriKeySignature.KeyMode.major : .minor
+                let ks = SalieriKeySignature(fifths: fifths, mode: mode)
+                return .keySignature(ks)
+            }
+        }
+        // TODO: Map clef (not in MIDI, can infer or set default)
+        // TODO: Extend for other event types (barlines, tuplets, etc.)
         return nil
+    }
+    
+    // Helper: Convert MIDI note number to pitch (step, octave, alter)
+    private static func midiNoteToPitch(midiNote: UInt8) -> (SalieriPitch.Step, Int, Double?) {
+        let noteNames: [SalieriPitch.Step] = [.C, .C, .D, .D, .E, .F, .F, .G, .G, .A, .A, .B]
+        let alters: [Double?] = [nil, 1.0, nil, 1.0, nil, nil, 1.0, nil, 1.0, nil, 1.0, nil]
+        let noteIndex = Int(midiNote) % 12
+        let octave = Int(midiNote) / 12 - 1
+        let step = noteNames[noteIndex]
+        let alter = alters[noteIndex]
+        return (step, octave, alter)
+    }
+    // Helper: Convert alter to SalieriAccidental
+    private static func alterToAccidental(_ alter: Double?) -> SalieriAccidental? {
+        guard let a = alter else { return nil }
+        switch a {
+        case 1.0: return .sharp
+        case -1.0: return .flat
+        case 0.5: return .quarterSharp
+        case -0.5: return .quarterFlat
+        default: return .other("\(a)")
+        }
+    }
+}
+
+// Add fractionOfWhole computed property to SalieriDuration for rest detection
+extension SalieriDuration {
+    var fractionOfWhole: Double {
+        switch self {
+        case .whole: return 1.0
+        case .half: return 0.5
+        case .quarter: return 0.25
+        case .eighth: return 0.125
+        case .sixteenth: return 0.0625
+        case .thirtySecond: return 0.03125
+        case .sixtyFourth: return 0.015625
+        case .dotted(let base, let dots):
+            var value = base.fractionOfWhole
+            for i in 0..<dots {
+                value += base.fractionOfWhole / pow(2.0, Double(i+1))
+            }
+            return value
+        case .custom(let v): return v
+        }
     }
 }
 
