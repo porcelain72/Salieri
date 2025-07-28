@@ -691,7 +691,6 @@ class SalieriPDFRenderer {
     }
     
     private static func drawClef(_ clef: SalieriClef, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
-        let fontSize = config.staffSize * 4.0 // Professional font size
         let clefSymbol: String
         
         switch clef.type {
@@ -703,53 +702,104 @@ class SalieriPDFRenderer {
         case .other(_): clefSymbol = "G" // Default to treble
         }
         
-        // Save graphics state for text drawing
-        context.saveGState()
+        // Draw professional line-based clefs
+        context.setStrokeColor(CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0)) // Black color
+        context.setLineWidth(1.5)
         
-        // Use NSAttributedString with proper PDF context handling
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.black
-        ]
-        let attrStr = NSAttributedString(string: clefSymbol, attributes: attributes)
-        
-        // Center the clef symbol on the point
-        let textSize = attrStr.size()
-        let drawPoint = CGPoint(x: point.x - textSize.width / 2, y: point.y - textSize.height / 2)
-        
-        // Draw the text
-        attrStr.draw(at: drawPoint)
-        
-        // Restore graphics state
-        context.restoreGState()
+        switch clef.type {
+        case .treble:
+            // Draw a more detailed treble clef shape
+            let x = point.x
+            let y = point.y
+            let size = config.staffSize * 2.5
+            
+            // Main vertical line
+            context.move(to: CGPoint(x: x, y: y - size))
+            context.addLine(to: CGPoint(x: x, y: y + size))
+            
+            // Top spiral (treble clef characteristic)
+            context.move(to: CGPoint(x: x, y: y - size))
+            context.addCurve(to: CGPoint(x: x + size/3, y: y - size/2),
+                            control1: CGPoint(x: x + size/6, y: y - size),
+                            control2: CGPoint(x: x + size/3, y: y - size/2))
+            context.addCurve(to: CGPoint(x: x, y: y - size/4),
+                            control1: CGPoint(x: x + size/2, y: y - size/3),
+                            control2: CGPoint(x: x + size/4, y: y - size/4))
+            
+            // Bottom curve
+            context.move(to: CGPoint(x: x, y: y + size))
+            context.addCurve(to: CGPoint(x: x + size/3, y: y + size/2),
+                            control1: CGPoint(x: x + size/6, y: y + size),
+                            control2: CGPoint(x: x + size/3, y: y + size/2))
+            
+            context.strokePath()
+            
+        case .bass:
+            // Draw a more detailed bass clef shape
+            let x = point.x
+            let y = point.y
+            let size = config.staffSize * 2.0
+            
+            // Two dots (characteristic of bass clef)
+            context.setFillColor(CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0))
+            context.fillEllipse(in: CGRect(x: x - size/3, y: y - size/2, width: size/3, height: size/3))
+            context.fillEllipse(in: CGRect(x: x - size/3, y: y + size/6, width: size/3, height: size/3))
+            
+            // Curved line (bass clef characteristic)
+            context.setStrokeColor(CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0))
+            context.setLineWidth(1.5)
+            context.move(to: CGPoint(x: x + size/6, y: y - size/2))
+            context.addCurve(to: CGPoint(x: x + size/6, y: y + size/2),
+                            control1: CGPoint(x: x + size/2, y: y - size/4),
+                            control2: CGPoint(x: x + size/2, y: y + size/4))
+            context.strokePath()
+            
+        default:
+            // For other clef types, draw a simple symbol
+            let x = point.x
+            let y = point.y
+            let size = config.staffSize * 2.0
+            
+            context.move(to: CGPoint(x: x - size/2, y: y))
+            context.addLine(to: CGPoint(x: x + size/2, y: y))
+            context.strokePath()
+        }
     }
     
     private static func drawTimeSignature(_ measure: SalieriMeasureLayout, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
         // Default to 4/4 time signature for now
         let timeSignature = "4/4"
-        let fontSize = config.staffSize * 2.5 // Professional font size
         
-        // Save graphics state for text drawing
-        context.saveGState()
+        // Draw a simple line-based time signature that will definitely be visible
+        context.setStrokeColor(CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0))
+        context.setLineWidth(1.0)
         
-        // Use NSAttributedString with proper PDF context handling
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.black
-        ]
-        let attrStr = NSAttributedString(string: timeSignature, attributes: attributes)
+        let x = point.x
+        let y = point.y
+        let size = config.staffSize * 1.5
         
-        // Center the time signature
-        let textSize = attrStr.size()
-        let drawPoint = CGPoint(x: point.x - textSize.width / 2, y: point.y - textSize.height / 2)
+        // Draw "4/4" as simple lines and shapes
+        // Top "4"
+        context.move(to: CGPoint(x: x - size/2, y: y - size/2))
+        context.addLine(to: CGPoint(x: x - size/2, y: y + size/2))
+        context.move(to: CGPoint(x: x - size/2, y: y))
+        context.addLine(to: CGPoint(x: x - size/6, y: y - size/2))
+        context.move(to: CGPoint(x: x - size/6, y: y - size/2))
+        context.addLine(to: CGPoint(x: x - size/6, y: y + size/2))
         
-        // Draw the text
-        attrStr.draw(at: drawPoint)
+        // Slash
+        context.move(to: CGPoint(x: x - size/8, y: y - size/2))
+        context.addLine(to: CGPoint(x: x + size/8, y: y + size/2))
         
-        // Restore graphics state
-        context.restoreGState()
+        // Bottom "4"
+        context.move(to: CGPoint(x: x + size/6, y: y - size/2))
+        context.addLine(to: CGPoint(x: x + size/6, y: y + size/2))
+        context.move(to: CGPoint(x: x + size/6, y: y))
+        context.addLine(to: CGPoint(x: x + size/2, y: y - size/2))
+        context.move(to: CGPoint(x: x + size/2, y: y - size/2))
+        context.addLine(to: CGPoint(x: x + size/2, y: y + size/2))
+        
+        context.strokePath()
     }
     
     private static func drawMeasure(_ measure: SalieriMeasureLayout, yBase: CGFloat, context: CGContext, config: SalieriConfiguration) {
