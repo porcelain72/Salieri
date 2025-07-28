@@ -300,16 +300,82 @@ enum SalieriDuration {
 enum SalieriStemDirection { case up, down, unspecified }
 enum SalieriBeamType { case begin, continueBeam, end, none }
 
-// MARK: - Engraving Engine (Stub)
+// MARK: - Engraving/Layout Model
 
 struct SalieriLayout {
-    // Placeholder for engraved layout (systems, staves, measures, etc.)
+    var pages: [SalieriPage]
 }
+
+struct SalieriPage {
+    var systems: [SalieriSystem]
+    var pageNumber: Int
+}
+
+struct SalieriSystem {
+    var staves: [SalieriStaff]
+    var yPosition: CGFloat
+    var systemNumber: Int
+}
+
+struct SalieriStaff {
+    var measures: [SalieriMeasureLayout]
+    var partName: String?
+    var yPosition: CGFloat
+    var staffNumber: Int
+}
+
+struct SalieriMeasureLayout {
+    var events: [SalieriNotehead]
+    var xPosition: CGFloat
+    var width: CGFloat
+    var measureNumber: Int
+}
+
+struct SalieriNotehead {
+    var note: SalieriNote
+    var x: CGFloat
+    var y: CGFloat
+    // Add ledger lines, accidentals, stem, beam info, etc.
+}
+
+// MARK: - Engraving Engine
 
 class SalieriEngraver {
     static func engrain(score: SalieriScore, config: SalieriConfiguration) -> SalieriLayout {
-        // TODO: Implement engraving/layout
-        return SalieriLayout()
+        // 1. System breaking: decide how many systems per page
+        // 2. Staff layout: position staves within each system
+        // 3. Measure layout: assign measures to systems, calculate widths
+        // 4. Note layout: position noteheads, accidentals, stems, beams, etc.
+        // 5. Pagination: split systems across pages
+        //
+        // For now, implement a basic layout: one system per page, one staff per part, measures in sequence
+        var pages: [SalieriPage] = []
+        let systemSpacing: CGFloat = 120.0
+        let staffSpacing: CGFloat = 80.0
+        let measureWidth: CGFloat = 120.0
+        var systemNumber = 1
+        var pageNumber = 1
+        var yOffset: CGFloat = config.margins.top
+        var systems: [SalieriSystem] = []
+        // For each part, create a staff
+        let staves: [SalieriStaff] = score.parts.enumerated().map { (partIdx, part) in
+            let measures: [SalieriMeasureLayout] = part.measures.enumerated().map { (mIdx, measure) in
+                // For now, layout all notes at equal spacing
+                let events: [SalieriNotehead] = measure.events.enumerated().compactMap { (eIdx, event) in
+                    if case let .note(note) = event {
+                        return SalieriNotehead(note: note, x: CGFloat(eIdx) * 30.0, y: 0.0)
+                    }
+                    return nil
+                }
+                return SalieriMeasureLayout(events: events, xPosition: CGFloat(mIdx) * measureWidth, width: measureWidth, measureNumber: measure.number)
+            }
+            return SalieriStaff(measures: measures, partName: part.name, yPosition: yOffset + CGFloat(partIdx) * staffSpacing, staffNumber: partIdx + 1)
+        }
+        let system = SalieriSystem(staves: staves, yPosition: yOffset, systemNumber: systemNumber)
+        systems.append(system)
+        let page = SalieriPage(systems: systems, pageNumber: pageNumber)
+        pages.append(page)
+        return SalieriLayout(pages: pages)
     }
 }
 
