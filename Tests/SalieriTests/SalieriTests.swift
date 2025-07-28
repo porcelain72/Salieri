@@ -988,9 +988,9 @@ final class SalieriTests: XCTestCase {
             do {
                 try data.write(to: tempURL)
                 print("Clef selection test PDF saved to: \(tempURL.path)")
-                print("Top track: C4-F4 (should use treble clef)")
-                print("Bottom track: C3-F3 (should use bass clef)")
-                print("Note: Currently both use treble clef - clef selection needs implementation")
+                print("Top track: C4-F4 (should use treble clef 'G')")
+                print("Bottom track: C3-F3 (should use bass clef 'F')")
+                print("Note: Automatic clef selection should now be working")
             } catch {
                 print("Failed to save clef selection test PDF: \(error)")
             }

@@ -691,7 +691,7 @@ class SalieriPDFRenderer {
     }
     
     private static func drawClef(_ clef: SalieriClef, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
-        let fontSize = config.staffSize * 4.0 // Increased font size for better visibility
+        let fontSize = config.staffSize * 4.0 // Professional font size
         let clefSymbol: String
         
         switch clef.type {
@@ -703,9 +703,11 @@ class SalieriPDFRenderer {
         case .other(_): clefSymbol = "G" // Default to treble
         }
         
-        // Use a simple, reliable font
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+        // Save graphics state for text drawing
+        context.saveGState()
         
+        // Use NSAttributedString with proper PDF context handling
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor.black
@@ -715,16 +717,24 @@ class SalieriPDFRenderer {
         // Center the clef symbol on the point
         let textSize = attrStr.size()
         let drawPoint = CGPoint(x: point.x - textSize.width / 2, y: point.y - textSize.height / 2)
+        
+        // Draw the text
         attrStr.draw(at: drawPoint)
+        
+        // Restore graphics state
+        context.restoreGState()
     }
     
     private static func drawTimeSignature(_ measure: SalieriMeasureLayout, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
         // Default to 4/4 time signature for now
         let timeSignature = "4/4"
-        let fontSize = config.staffSize * 2.5
+        let fontSize = config.staffSize * 2.5 // Professional font size
         
+        // Save graphics state for text drawing
+        context.saveGState()
+        
+        // Use NSAttributedString with proper PDF context handling
         let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
-        
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor.black
@@ -734,7 +744,12 @@ class SalieriPDFRenderer {
         // Center the time signature
         let textSize = attrStr.size()
         let drawPoint = CGPoint(x: point.x - textSize.width / 2, y: point.y - textSize.height / 2)
+        
+        // Draw the text
         attrStr.draw(at: drawPoint)
+        
+        // Restore graphics state
+        context.restoreGState()
     }
     
     private static func drawMeasure(_ measure: SalieriMeasureLayout, yBase: CGFloat, context: CGContext, config: SalieriConfiguration) {
