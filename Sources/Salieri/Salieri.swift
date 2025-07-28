@@ -448,7 +448,8 @@ class SalieriEngraver {
                 
                 // Create staves for this system
                 let staves: [SalieriStaff] = score.parts.enumerated().map { (partIdx, part) in
-                    let clef = SalieriClef(type: .treble, line: 2)
+                    // Select appropriate clef based on note ranges in this part
+                    let clef = selectClefForPart(part)
                     
                     // Get measures for this part in this system
                     let partMeasures: [SalieriMeasure]
@@ -460,7 +461,7 @@ class SalieriEngraver {
                     }
                     
                     let measures = partMeasures.enumerated().map { (index, measure) in
-                        createMeasureLayout(measure, localMeasureIndex: index, measureWidth: measureWidth, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
+                        createMeasureLayout(measure, localMeasureIndex: index, measureWidth: measureWidth, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight, clef: clef)
                     }
                     
                     let staffYPosition = systemYPosition + CGFloat(partIdx) * staffSpacing
@@ -480,8 +481,38 @@ class SalieriEngraver {
         return SalieriLayout(pages: pages)
     }
     
+    // Helper: Select appropriate clef based on note ranges in a part
+    private static func selectClefForPart(_ part: SalieriPart) -> SalieriClef {
+        // Collect all notes from the part
+        let allNotes = part.measures.flatMap { measure in
+            measure.events.compactMap { event in
+                if case let .note(note) = event {
+                    return note
+                }
+                return nil
+            }
+        }
+        
+        guard !allNotes.isEmpty else {
+            return SalieriClef(type: .treble, line: 2) // Default to treble
+        }
+        
+        // Calculate average MIDI note number
+        let midiNumbers = allNotes.map { midiNumberForPitch($0.pitch) }
+        let averageMidi = midiNumbers.reduce(0, +) / midiNumbers.count
+        
+        // Select clef based on average pitch
+        if averageMidi < 50 { // Below C3
+            return SalieriClef(type: .bass, line: 4)
+        } else if averageMidi < 60 { // C3 to C4
+            return SalieriClef(type: .bass, line: 4)
+        } else { // C4 and above
+            return SalieriClef(type: .treble, line: 2)
+        }
+    }
+    
     // Helper: Create measure layout with proper note positioning
-    private static func createMeasureLayout(_ measure: SalieriMeasure, localMeasureIndex: Int, measureWidth: CGFloat, staffLineSpacing: CGFloat, staffHeight: CGFloat) -> SalieriMeasureLayout {
+    private static func createMeasureLayout(_ measure: SalieriMeasure, localMeasureIndex: Int, measureWidth: CGFloat, staffLineSpacing: CGFloat, staffHeight: CGFloat, clef: SalieriClef) -> SalieriMeasureLayout {
         let notesPerBeamGroup = 2
         var beamGroup = 0
         var beamCount = 0
@@ -500,7 +531,6 @@ class SalieriEngraver {
                 }
                 
                 // Calculate vertical position (y) based on pitch and clef
-                let clef = SalieriClef(type: .treble, line: 2)
                 let y = yForPitch(note.pitch, clef: clef, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
                 
                 // Accidentals
@@ -624,8 +654,17 @@ class SalieriPDFRenderer {
         let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
         let yBase = staff.yPosition
         
-        // Draw clef at the beginning of the staff
-        drawClef(staff.clef, at: CGPoint(x: config.margins.left + 20, y: yBase), context: context, config: config)
+        // Draw clef at the beginning of the staff (improved positioning)
+        let clefX = config.margins.left + 20
+        let clefY = yBase + staffHeight / 2 // Center clef vertically on staff
+        drawClef(staff.clef, at: CGPoint(x: clefX, y: clefY), context: context, config: config)
+        
+        // Draw time signature after clef (if available)
+        if let firstMeasure = staff.measures.first {
+            let timeSigX = clefX + 50 // Position after clef
+            let timeSigY = yBase + staffHeight / 2
+            drawTimeSignature(firstMeasure, at: CGPoint(x: timeSigX, y: timeSigY), context: context, config: config)
+        }
         
         // Draw staff lines to system width
         context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
@@ -644,7 +683,7 @@ class SalieriPDFRenderer {
     }
     
     private static func drawClef(_ clef: SalieriClef, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
-        let fontSize = config.staffSize * 3.0
+        let fontSize = config.staffSize * 4.0 // Increased font size for better visibility
         let clefSymbol: String
         
         switch clef.type {
@@ -656,12 +695,36 @@ class SalieriPDFRenderer {
         case .other(_): clefSymbol = "𝄞" // Default to treble
         }
         
+        // Use a more reliable font for musical symbols
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: fontSize),
+            .font: font,
             .foregroundColor: NSColor.black
         ]
         let attrStr = NSAttributedString(string: clefSymbol, attributes: attributes)
-        attrStr.draw(at: point)
+        
+        // Center the clef symbol on the point
+        let textSize = attrStr.size()
+        let drawPoint = CGPoint(x: point.x - textSize.width / 2, y: point.y - textSize.height / 2)
+        attrStr.draw(at: drawPoint)
+    }
+    
+    private static func drawTimeSignature(_ measure: SalieriMeasureLayout, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
+        // Default to 4/4 time signature for now
+        let timeSignature = "4/4"
+        let fontSize = config.staffSize * 2.5
+        
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.black
+        ]
+        let attrStr = NSAttributedString(string: timeSignature, attributes: attributes)
+        
+        // Center the time signature
+        let textSize = attrStr.size()
+        let drawPoint = CGPoint(x: point.x - textSize.width / 2, y: point.y - textSize.height / 2)
+        attrStr.draw(at: drawPoint)
     }
     
     private static func drawMeasure(_ measure: SalieriMeasureLayout, yBase: CGFloat, context: CGContext, config: SalieriConfiguration) {

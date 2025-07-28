@@ -29,12 +29,12 @@ The visual regression tests generate the following PDF files in the temporary di
 
 ### 3. `clef_time_test_output.pdf`
 - **Purpose**: Test clef and time signature rendering
-- **Content**: Time signature (4/4), key signature (C major), single note
+- **Content**: Simple score with clef and time signature
 - **What to Check**:
-  - ✅ Treble clef (𝄞) is visible and properly sized
-  - ✅ Time signature appears (if parsing works)
-  - ✅ Key signature appears (if parsing works)
-  - ✅ Note positioning relative to clef
+  - ✅ Treble clef (𝄞) is visible and properly positioned
+  - ✅ Time signature (4/4) is visible after the clef
+  - ✅ Clef and time signature are centered on the staff
+  - ✅ Proper font size and positioning
 
 ### 4. `overprint_test_output.pdf`
 - **Purpose**: Test note overprinting prevention
@@ -63,7 +63,8 @@ The visual regression tests generate the following PDF files in the temporary di
   - ✅ Systems align across tracks
   - ✅ Proper pagination for complex scores
   - ✅ Melody: C4-G4 range (treble clef appropriate)
-  - ✅ Bass: C3-F3 range (typical bass range, minimal ledger lines)
+  - ✅ Bass: C3-F3 range (bass clef automatically selected)
+  - ✅ Appropriate clefs for each track's note range
 
 ### 7. `bar_line_alignment_test.pdf`
 - **Purpose**: Test bar line alignment with system edges
@@ -84,13 +85,14 @@ The visual regression tests generate the following PDF files in the temporary di
   - ✅ Readable but compact layout
 
 ### 9. `clef_selection_test.pdf`
-- **Purpose**: Test clef selection for different note ranges
+- **Purpose**: Test automatic clef selection for different note ranges
 - **Content**: Two tracks with different note ranges
 - **What to Check**:
-  - ✅ Top track: C4-F4 (should use treble clef)
-  - ✅ Bottom track: C3-F3 (should use bass clef)
-  - ✅ Note: Currently both use treble clef (clef selection needs implementation)
+  - ✅ Top track: C4-F4 (treble clef automatically selected)
+  - ✅ Bottom track: C3-F3 (bass clef automatically selected)
+  - ✅ Clefs are properly positioned and visible
   - ✅ No excessive ledger lines for typical note ranges
+  - ✅ Professional clef selection based on note ranges
 
 ## How to Run Visual Tests
 
