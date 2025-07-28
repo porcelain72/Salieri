@@ -998,6 +998,45 @@ final class SalieriTests: XCTestCase {
         #endif
     }
     
+    func testNotePositioningWithinMeasures() {
+        let sequence = createMusicSequence()
+        let track = createMusicTrack(in: sequence)
+        
+        // Create a measure with multiple notes to test positioning
+        // Add 4 quarter notes in a single measure
+        for noteIndex in 0..<4 {
+            let noteNumber = 60 + noteIndex // C, D, E, F
+            var note = MIDINoteMessage(channel: 0, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 1.0)
+            MusicTrackNewMIDINoteEvent(track, Double(noteIndex), &note)
+        }
+        
+        let config = SalieriConfiguration(
+            pageSize: CGSize(width: 612, height: 792),
+            margins: EdgeInsets(top: 72, left: 72, bottom: 72, right: 72),
+            staffSize: 8.0
+        )
+        
+        let salieri = Salieri(configuration: config)
+        let pdfDocument = salieri.renderPDF(from: sequence)
+        
+        XCTAssertNotNil(pdfDocument)
+        
+        // Save for visual inspection of note positioning
+        #if DEBUG
+        if let pdf = pdfDocument, let data = pdf.dataRepresentation() {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("note_positioning_test.pdf")
+            do {
+                try data.write(to: tempURL)
+                print("Note positioning test PDF saved to: \(tempURL.path)")
+                print("Check that 4 notes are evenly spaced within the measure")
+                print("Notes should align with measure boundaries and not overlap")
+            } catch {
+                print("Failed to save note positioning test PDF: \(error)")
+            }
+        }
+        #endif
+    }
+    
     // MARK: - Helper Methods
     
     private func createMusicSequence() -> MusicSequence {

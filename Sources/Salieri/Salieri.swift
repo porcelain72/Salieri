@@ -542,10 +542,10 @@ class SalieriEngraver {
                 // Stem direction (up for notes below middle line, down for above)
                 let stemDirection: SalieriStemDirection = y > staffHeight / 2 ? .up : .down
                 
-                // Calculate horizontal position with proper spacing
-                let xSpacing = calculateNoteSpacing(for: note, measureWidth: measureWidth, totalNotes: measure.events.count)
+                // Calculate horizontal position within the measure
+                let xPosition = calculateNotePosition(for: note, measureIndex: eIdx, measureWidth: measureWidth, totalNotes: measure.events.count)
                 
-                return SalieriNotehead(note: note, x: xSpacing, y: y, accidental: accidental, ledgerLines: ledgerLines, stemDirection: stemDirection, beamGroup: group)
+                return SalieriNotehead(note: note, x: xPosition, y: y, accidental: accidental, ledgerLines: ledgerLines, stemDirection: stemDirection, beamGroup: group)
             }
             return nil
         }
@@ -553,10 +553,22 @@ class SalieriEngraver {
         return SalieriMeasureLayout(events: events, xPosition: CGFloat(localMeasureIndex) * measureWidth, width: measureWidth, measureNumber: measure.number)
     }
     
-    // Helper: Calculate proper note spacing to prevent overprinting
-    private static func calculateNoteSpacing(for note: SalieriNote, measureWidth: CGFloat, totalNotes: Int) -> CGFloat {
-        // Use duration to determine spacing
-        let baseSpacing = measureWidth / CGFloat(max(totalNotes, 1))
+    // Helper: Calculate note position within a measure
+    private static func calculateNotePosition(for note: SalieriNote, measureIndex: Int, measureWidth: CGFloat, totalNotes: Int) -> CGFloat {
+        // Calculate the duration-based width for this note
+        let noteWidth = calculateNoteWidth(for: note, measureWidth: measureWidth, totalNotes: totalNotes)
+        
+        // Calculate the starting position by accumulating widths of previous notes
+        var startPosition: CGFloat = 0
+        // For now, use simple equal spacing, but this could be enhanced with proper rhythmic positioning
+        startPosition = (measureWidth / CGFloat(max(totalNotes, 1))) * CGFloat(measureIndex)
+        
+        return startPosition
+    }
+    
+    // Helper: Calculate note width based on duration
+    private static func calculateNoteWidth(for note: SalieriNote, measureWidth: CGFloat, totalNotes: Int) -> CGFloat {
+        let baseWidth = measureWidth / CGFloat(max(totalNotes, 1))
         let durationMultiplier: CGFloat
         switch note.duration {
         case .whole: durationMultiplier = 4.0
@@ -569,7 +581,7 @@ class SalieriEngraver {
         case .dotted(_, _): durationMultiplier = 1.5 // Approximate
         case .custom(let v): durationMultiplier = CGFloat(v)
         }
-        return baseSpacing * durationMultiplier
+        return baseWidth * durationMultiplier
     }
     
     // Helper: Calculate vertical position for a pitch on the staff
@@ -741,10 +753,10 @@ class SalieriPDFRenderer {
         context.addLine(to: CGPoint(x: xStart, y: yBase + staffHeight))
         context.strokePath()
         
-        // Draw notes with proper spacing
-        for (index, notehead) in measure.events.enumerated() {
-            let xOffset = CGFloat(index) * 40.0 // Fixed spacing between notes
-            drawNotehead(notehead, xBase: xStart + xOffset, yBase: yBase, context: context, config: config)
+        // Draw notes using their calculated positions within the measure
+        for notehead in measure.events {
+            let noteX = xStart + notehead.x // Use the calculated x position
+            drawNotehead(notehead, xBase: noteX, yBase: yBase, context: context, config: config)
         }
         
         // Draw measure line at end

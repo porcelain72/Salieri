@@ -94,11 +94,21 @@ The visual regression tests generate the following PDF files in the temporary di
   - ✅ No excessive ledger lines for typical note ranges
   - ✅ Professional clef selection based on note ranges
 
+### 10. `note_positioning_test.pdf`
+- **Purpose**: Test note positioning within measures
+- **Content**: 4 quarter notes in a single measure
+- **What to Check**:
+  - ✅ Notes are evenly spaced within the measure
+  - ✅ Notes align with measure boundaries
+  - ✅ No note overlap or overprinting
+  - ✅ Proper horizontal positioning relative to bar lines
+  - ✅ Professional note spacing and layout
+
 ## How to Run Visual Tests
 
 ### Run All Visual Tests
 ```bash
-swift test --filter "testVisualOutputQuality|testProperScalingAndPositioning|testClefAndTimeSignatureRendering|testNoteOverprintingPrevention|testStaffWrappingAndPagination|testMultiTrackStaffWrapping|testBarLineAlignmentWithSystemEdges|testSystemsPerPage|testClefSelectionForNoteRanges"
+swift test --filter "testVisualOutputQuality|testProperScalingAndPositioning|testClefAndTimeSignatureRendering|testNoteOverprintingPrevention|testStaffWrappingAndPagination|testMultiTrackStaffWrapping|testBarLineAlignmentWithSystemEdges|testSystemsPerPage|testClefSelectionForNoteRanges|testNotePositioningWithinMeasures"
 ```
 
 ### Run Individual Tests
@@ -129,6 +139,9 @@ swift test --filter testSystemsPerPage
 
 # Clef selection for note ranges
 swift test --filter testClefSelectionForNoteRanges
+
+# Note positioning within measures
+swift test --filter testNotePositioningWithinMeasures
 ```
 
 ## Visual Quality Checklist
