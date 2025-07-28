@@ -31,7 +31,7 @@ final class SalieriTests: XCTestCase {
         guard let trk = track else { XCTFail("Failed to create track"); return }
         // Add time signature meta event (3/4)
         var timeSigBytes: [UInt8] = [3, 2, 24, 8] + Array(repeating: 0, count: 28)
-        var meta = MIDIMetaEvent(metaEventType: 0x58, unused1: 0, unused2: 0, unused3: 0, dataLength: 4, data: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+        var meta = MIDIMetaEvent(metaEventType: 0x58, unused1: 0, unused2: 0, unused3: 0, dataLength: 4, data: (UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0)))
         withUnsafeBytes(of: &timeSigBytes) { rawBuf in
             let tuplePtr = UnsafeMutableRawPointer(mutating: &meta.data)
             tuplePtr.copyMemory(from: rawBuf.baseAddress!, byteCount: 32)
@@ -39,7 +39,7 @@ final class SalieriTests: XCTestCase {
         MusicTrackNewMetaEvent(trk, 0.0, &meta)
         // Add key signature meta event (2 sharps, major)
         var keySigBytes: [UInt8] = [2, 0] + Array(repeating: 0, count: 30)
-        var meta2 = MIDIMetaEvent(metaEventType: 0x59, unused1: 0, unused2: 0, unused3: 0, dataLength: 2, data: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+        var meta2 = MIDIMetaEvent(metaEventType: 0x59, unused1: 0, unused2: 0, unused3: 0, dataLength: 2, data: (UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0),UInt8(0)))
         withUnsafeBytes(of: &keySigBytes) { rawBuf in
             let tuplePtr = UnsafeMutableRawPointer(mutating: &meta2.data)
             tuplePtr.copyMemory(from: rawBuf.baseAddress!, byteCount: 32)
