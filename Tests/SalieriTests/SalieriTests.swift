@@ -78,4 +78,30 @@ final class SalieriTests: XCTestCase {
         let score = SalieriScore.from(sequence: seq)
         XCTAssertEqual(score.parts[0].measures.count, 2)
     }
+    
+    func testPDFRendering() {
+        // Create a simple score with one part, one measure, one note
+        let note = SalieriNote(
+            pitch: SalieriPitch(step: .C, octave: 4, alter: nil),
+            duration: .quarter,
+            accidental: nil,
+            stemDirection: nil,
+            beamType: nil,
+            isChord: false
+        )
+        let measure = SalieriMeasure(number: 1, events: [.note(note)])
+        let part = SalieriPart(name: "Test Part", measures: [measure])
+        let score = SalieriScore(title: "Test Score", parts: [part], isFullScore: true)
+        let config = SalieriConfiguration()
+        let layout = SalieriEngraver.engrain(score: score, config: config)
+        let pdf = SalieriPDFRenderer.render(layout: layout, config: config)
+        XCTAssertNotNil(pdf)
+        XCTAssertGreaterThan(pdf?.pageCount ?? 0, 0)
+        // Optionally, write to temp file for manual inspection
+        if let pdf = pdf, let data = pdf.dataRepresentation() {
+            let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("SalieriTestOutput.pdf")
+            try? data.write(to: tempURL)
+            print("PDF written to \(tempURL.path)")
+        }
+    }
 }
