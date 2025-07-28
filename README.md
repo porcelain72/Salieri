@@ -233,7 +233,28 @@ Salieri is designed to be extensible. Future features planned include:
 
 ## License
 
-[Add your license information here]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+### License Summary
+
+The MIT License is a permissive license that allows you to:
+- Use the software for any purpose
+- Modify the software
+- Distribute the software
+- Use it commercially
+- Sublicense it
+
+The only requirement is that you include the original copyright and license notice in any copy of the software/source.
+
+### Attribution
+
+If you use Salieri in your project, please include attribution in your documentation:
+
+```
+Salieri - Professional MIDI to PDF Sheet Music Generator
+Copyright (c) 2025 Salieri Contributors
+Licensed under MIT License
+```
 
 ## Acknowledgments
 
