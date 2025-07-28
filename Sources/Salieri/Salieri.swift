@@ -49,16 +49,94 @@ public class Salieri {
     }
 }
 
-// MARK: - Internal Music Model (Stub)
+// MARK: - Internal Music Model (Expanded)
 
 struct SalieriScore {
-    // Placeholder for the internal music model
-    // Will contain parts, measures, notes, etc.
+    var title: String?
+    var parts: [SalieriPart]
+    var isFullScore: Bool
+    
     static func from(sequence: MusicSequence) -> SalieriScore {
         // TODO: Implement parsing
-        return SalieriScore()
+        return SalieriScore(title: nil, parts: [], isFullScore: true)
     }
 }
+
+struct SalieriPart {
+    var name: String?
+    var measures: [SalieriMeasure]
+    // Instrument, MIDI channel, etc. can be added here
+}
+
+struct SalieriMeasure {
+    var number: Int
+    var events: [SalieriEvent]
+}
+
+enum SalieriEvent {
+    case note(SalieriNote)
+    case rest(SalieriRest)
+    case clef(SalieriClef)
+    case keySignature(SalieriKeySignature)
+    case timeSignature(SalieriTimeSignature)
+    // Add more as needed (barlines, tuplets, etc.)
+}
+
+struct SalieriNote {
+    var pitch: SalieriPitch
+    var duration: SalieriDuration
+    var accidental: SalieriAccidental?
+    var stemDirection: SalieriStemDirection?
+    var beamType: SalieriBeamType?
+    var isChord: Bool
+    // Add articulations, ties, etc. as needed
+}
+
+struct SalieriRest {
+    var duration: SalieriDuration
+}
+
+struct SalieriClef {
+    enum ClefType { case treble, bass, alto, tenor, percussion, other(String) }
+    var type: ClefType
+    var line: Int // Staff line (1=bottom)
+}
+
+struct SalieriKeySignature {
+    var fifths: Int // Number of sharps (positive) or flats (negative)
+    var mode: KeyMode
+    enum KeyMode { case major, minor, other(String) }
+}
+
+struct SalieriTimeSignature {
+    var numerator: Int
+    var denominator: Int
+}
+
+// MARK: - Supporting Types
+
+struct SalieriPitch {
+    var step: Step
+    var octave: Int
+    var alter: Double? // For microtonal (e.g., quarter-sharp = 0.5)
+    
+    enum Step: String { case C, D, E, F, G, A, B }
+}
+
+enum SalieriAccidental {
+    case sharp, flat, natural, doubleSharp, doubleFlat
+    case quarterSharp, quarterFlat, threeQuarterSharp, threeQuarterFlat
+    case other(String) // For future microtonal support
+}
+
+enum SalieriDuration {
+    case whole, half, quarter, eighth, sixteenth, thirtySecond, sixtyFourth
+    case dotted(base: SalieriDuration, dots: Int)
+    case custom(Double) // Fraction of whole note
+}
+
+enum SalieriStemDirection { case up, down, unspecified }
+enum SalieriBeamType { case begin, continueBeam, end, none }
 
 // MARK: - Engraving Engine (Stub)
 
