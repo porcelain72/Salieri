@@ -79,12 +79,74 @@ struct SalieriScore {
     }
     
     private static func parseMeasures(from track: MusicTrack) -> [SalieriMeasure] {
-        // TODO: Extract events from track, group into measures
-        // 1. Iterate over events in the track
-        // 2. Map events to SalieriEvent (note, rest, clef, etc.)
-        // 3. Group events by measure (using time signature and tick position)
-        // 4. Return array of SalieriMeasure
-        return []
+        var measures: [SalieriMeasure] = []
+        // 1. Create event iterator
+        var iterator: MusicEventIterator? = nil
+        NewMusicEventIterator(track, &iterator)
+        guard let eventIterator = iterator else { return measures }
+        defer { DisposeMusicEventIterator(eventIterator) }
+        
+        // 2. Prepare measure grouping
+        var currentMeasureNumber = 1
+        var currentEvents: [SalieriEvent] = []
+        var currentTimeSignature = SalieriTimeSignature(numerator: 4, denominator: 4) // Default, update as found
+        var currentMeasureStartBeat: MusicTimeStamp = 0.0
+        let beatsPerMeasure = { (ts: SalieriTimeSignature) in Double(ts.numerator) }
+        
+        var hasEvent: DarwinBoolean = false
+        MusicEventIteratorHasCurrentEvent(eventIterator, &hasEvent)
+        while hasEvent.boolValue {
+            var timeStamp: MusicTimeStamp = 0
+            var eventType: MusicEventType = 0
+            var eventData: UnsafeRawPointer? = nil
+            var eventDataSize: UInt32 = 0
+            MusicEventIteratorGetEventInfo(eventIterator, &timeStamp, &eventType, &eventData, &eventDataSize)
+            
+            // 3. Map event to SalieriEvent
+            if let event = mapEvent(eventType: eventType, eventData: eventData, timeStamp: timeStamp) {
+                // Check if event crosses measure boundary
+                let beatInMeasure = timeStamp - currentMeasureStartBeat
+                if beatInMeasure >= beatsPerMeasure(currentTimeSignature) {
+                    // Close current measure and start new
+                    measures.append(SalieriMeasure(number: currentMeasureNumber, events: currentEvents))
+                    currentMeasureNumber += 1
+                    currentEvents = []
+                    currentMeasureStartBeat += beatsPerMeasure(currentTimeSignature)
+                }
+                currentEvents.append(event)
+                // Update time signature if event is a time signature
+                if case let .timeSignature(ts) = event {
+                    currentTimeSignature = ts
+                }
+            }
+            
+            MusicEventIteratorNextEvent(eventIterator)
+            MusicEventIteratorHasCurrentEvent(eventIterator, &hasEvent)
+        }
+        // Add last measure
+        if !currentEvents.isEmpty {
+            measures.append(SalieriMeasure(number: currentMeasureNumber, events: currentEvents))
+        }
+        return measures
+    }
+    
+    private static func mapEvent(eventType: MusicEventType, eventData: UnsafeRawPointer?, timeStamp: MusicTimeStamp) -> SalieriEvent? {
+        // Map MIDI note events
+        if eventType == kMusicEventType_MIDINoteMessage, let data = eventData?.assumingMemoryBound(to: MIDINoteMessage.self) {
+            let note = SalieriNote(
+                pitch: SalieriPitch(step: .C, octave: 4, alter: nil), // TODO: Map from MIDI note
+                duration: .quarter, // TODO: Map from MIDINoteMessage.duration
+                accidental: nil, // TODO: Map from pitch/modifiers
+                stemDirection: nil,
+                beamType: nil,
+                isChord: false
+            )
+            return .note(note)
+        }
+        // Map meta events (time signature, key signature, etc.)
+        // TODO: Implement mapping for clef, key signature, time signature
+        // TODO: Detect rests by gaps between notes
+        return nil
     }
 }
 
