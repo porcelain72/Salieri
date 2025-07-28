@@ -769,6 +769,99 @@ final class SalieriTests: XCTestCase {
         #endif
     }
     
+    func testStaffWrappingAndPagination() {
+        let sequence = createMusicSequence()
+        let track = createMusicTrack(in: sequence)
+        
+        // Create a long sequence that should span multiple systems and pages
+        // Add 20 measures with 4 notes each (80 total notes)
+        for measureIndex in 0..<20 {
+            for noteIndex in 0..<4 {
+                let noteNumber = 60 + (noteIndex % 8) // C major scale repeating
+                var note = MIDINoteMessage(channel: 0, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 1.0)
+                MusicTrackNewMIDINoteEvent(track, Double(measureIndex * 4 + noteIndex), &note)
+            }
+        }
+        
+        let config = SalieriConfiguration(
+            pageSize: CGSize(width: 612, height: 792), // US Letter
+            margins: EdgeInsets(top: 72, left: 72, bottom: 72, right: 72),
+            staffSize: 8.0
+        )
+        
+        let salieri = Salieri(configuration: config)
+        let pdfDocument = salieri.renderPDF(from: sequence)
+        
+        XCTAssertNotNil(pdfDocument)
+        XCTAssertGreaterThan(pdfDocument?.pageCount ?? 0, 1, "Long sequence should span multiple pages")
+        
+        // Save for visual inspection
+        #if DEBUG
+        if let pdf = pdfDocument, let data = pdf.dataRepresentation() {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("staff_wrapping_test.pdf")
+            do {
+                try data.write(to: tempURL)
+                print("Staff wrapping test PDF saved to: \(tempURL.path)")
+                print("PDF has \(pdf.pageCount) pages")
+            } catch {
+                print("Failed to save staff wrapping test PDF: \(error)")
+            }
+        }
+        #endif
+    }
+    
+    func testMultiTrackStaffWrapping() {
+        let sequence = createMusicSequence()
+        
+        // Create multiple tracks with different lengths
+        let melodyTrack = createMusicTrack(in: sequence)
+        let bassTrack = createMusicTrack(in: sequence)
+        
+        // Melody: 15 measures
+        for measureIndex in 0..<15 {
+            for noteIndex in 0..<4 {
+                let noteNumber = 60 + (noteIndex % 8) // C major scale
+                var note = MIDINoteMessage(channel: 0, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 1.0)
+                MusicTrackNewMIDINoteEvent(melodyTrack, Double(measureIndex * 4 + noteIndex), &note)
+            }
+        }
+        
+        // Bass: 12 measures (shorter)
+        for measureIndex in 0..<12 {
+            for noteIndex in 0..<2 {
+                let noteNumber = 36 + (noteIndex % 4) // Low C, D, E, F
+                var note = MIDINoteMessage(channel: 1, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 2.0)
+                MusicTrackNewMIDINoteEvent(bassTrack, Double(measureIndex * 4 + noteIndex * 2), &note)
+            }
+        }
+        
+        let config = SalieriConfiguration(
+            pageSize: CGSize(width: 612, height: 792),
+            margins: EdgeInsets(top: 72, left: 72, bottom: 72, right: 72),
+            staffSize: 8.0
+        )
+        
+        let salieri = Salieri(configuration: config)
+        let pdfDocument = salieri.renderPDF(from: sequence)
+        
+        XCTAssertNotNil(pdfDocument)
+        XCTAssertGreaterThan(pdfDocument?.pageCount ?? 0, 1, "Multi-track sequence should span multiple pages")
+        
+        // Save for visual inspection
+        #if DEBUG
+        if let pdf = pdfDocument, let data = pdf.dataRepresentation() {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("multi_track_wrapping_test.pdf")
+            do {
+                try data.write(to: tempURL)
+                print("Multi-track wrapping test PDF saved to: \(tempURL.path)")
+                print("PDF has \(pdf.pageCount) pages")
+            } catch {
+                print("Failed to save multi-track wrapping test PDF: \(error)")
+            }
+        }
+        #endif
+    }
+    
     // MARK: - Helper Methods
     
     private func createMusicSequence() -> MusicSequence {

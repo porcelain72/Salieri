@@ -45,11 +45,29 @@ The visual regression tests generate the following PDF files in the temporary di
   - ✅ Stems don't interfere with adjacent notes
   - ✅ Accidentals don't overlap with notes
 
+### 5. `staff_wrapping_test.pdf`
+- **Purpose**: Test staff wrapping and pagination
+- **Content**: 20 measures (80 notes) spanning multiple pages
+- **What to Check**:
+  - ✅ Staffs wrap when they reach the edge of the page
+  - ✅ Multiple systems per page (if space allows)
+  - ✅ Multiple pages generated for long sequences
+  - ✅ Proper page numbering and layout
+
+### 6. `multi_track_wrapping_test.pdf`
+- **Purpose**: Test multi-track staff wrapping
+- **Content**: Melody (15 measures) and bass (12 measures) tracks
+- **What to Check**:
+  - ✅ Multiple tracks wrap together
+  - ✅ Different track lengths handled correctly
+  - ✅ Systems align across tracks
+  - ✅ Proper pagination for complex scores
+
 ## How to Run Visual Tests
 
 ### Run All Visual Tests
 ```bash
-swift test --filter "testVisualOutputQuality|testProperScalingAndPositioning|testClefAndTimeSignatureRendering|testNoteOverprintingPrevention"
+swift test --filter "testVisualOutputQuality|testProperScalingAndPositioning|testClefAndTimeSignatureRendering|testNoteOverprintingPrevention|testStaffWrappingAndPagination|testMultiTrackStaffWrapping"
 ```
 
 ### Run Individual Tests
@@ -65,6 +83,12 @@ swift test --filter testClefAndTimeSignatureRendering
 
 # Overprinting prevention
 swift test --filter testNoteOverprintingPrevention
+
+# Staff wrapping and pagination
+swift test --filter testStaffWrappingAndPagination
+
+# Multi-track staff wrapping
+swift test --filter testMultiTrackStaffWrapping
 ```
 
 ## Visual Quality Checklist
@@ -193,6 +217,8 @@ let config = SalieriConfiguration(
 - ✅ Clef rendering (treble clef)
 - ✅ Proper spacing and positioning
 - ✅ Accidentals and ledger lines
+- ✅ Staff wrapping and pagination
+- ✅ Multi-track system breaking
 - ⚠️ Time signatures (parsing issue -10855)
 - ⚠️ Key signatures (basic support)
 - ❌ Advanced beaming
@@ -205,6 +231,8 @@ let config = SalieriConfiguration(
 - Implement advanced beaming rules
 - Add slurs, ties, and articulations
 - Support for text elements (dynamics, lyrics)
+- Optimize system breaking algorithms
+- Add page numbering and headers/footers
 
 ## Continuous Visual Testing
 

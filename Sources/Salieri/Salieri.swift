@@ -389,9 +389,7 @@ class SalieriEngraver {
         // 3. Measure layout: assign measures to systems, calculate widths
         // 4. Note layout: position noteheads, accidentals, stems, beams, ledger lines, etc.
         // 5. Pagination: split systems across pages
-        //
-        // For now, implement basic logic for each advanced feature
-        var pages: [SalieriPage] = []
+        
         let systemSpacing: CGFloat = 120.0
         let staffSpacing: CGFloat = 80.0
         let measureWidth: CGFloat = 200.0 // Increased for better spacing
@@ -399,55 +397,120 @@ class SalieriEngraver {
         let staffLineSpacing: CGFloat = config.staffSize * 1.5 // Reduced spacing
         let staffLines = 5
         let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
-        var systemNumber = 1
-        var pageNumber = 1
-        var yOffset: CGFloat = config.margins.top
-        var systems: [SalieriSystem] = []
-        // For each part, create a staff
-        let staves: [SalieriStaff] = score.parts.enumerated().map { (partIdx, part) in
-            // Assume treble clef for now
-            let clef = SalieriClef(type: .treble, line: 2)
-            let measures: [SalieriMeasureLayout] = part.measures.enumerated().map { (mIdx, measure) in
-                // Beaming: group notes for beaming
-                var beamGroup = 0
-                var beamCount = 0
-                // Calculate proper note spacing based on duration
-                let events: [SalieriNotehead] = measure.events.enumerated().compactMap { (eIdx, event) in
-                    if case let .note(note) = event {
-                        // Assign beam group
-                        var group: Int? = nil
-                        if note.duration == .eighth || note.duration == .sixteenth {
-                            group = beamGroup
-                            beamCount += 1
-                            if beamCount >= notesPerBeamGroup {
-                                beamGroup += 1
-                                beamCount = 0
-                            }
-                        }
-                        // Calculate vertical position (y) based on pitch and clef
-                        let y = yForPitch(note.pitch, clef: clef, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
-                        // Accidentals
-                        let accidental = note.accidental
-                        // Ledger lines
-                        let ledgerLines = ledgerLinesForPitch(note.pitch, clef: clef, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
-                        // Stem direction (up for notes below middle line, down for above)
-                        let stemDirection: SalieriStemDirection = y > staffHeight / 2 ? .up : .down
-                        // Calculate horizontal position with proper spacing
-                        let xSpacing = calculateNoteSpacing(for: note, measureWidth: measureWidth, totalNotes: measure.events.count)
-                        return SalieriNotehead(note: note, x: xSpacing, y: y, accidental: accidental, ledgerLines: ledgerLines, stemDirection: stemDirection, beamGroup: group)
-                    }
-                    return nil
-                }
-                return SalieriMeasureLayout(events: events, xPosition: CGFloat(mIdx) * measureWidth, width: measureWidth, measureNumber: measure.number)
-            }
-            return SalieriStaff(measures: measures, partName: part.name, yPosition: yOffset + CGFloat(partIdx) * staffSpacing, staffNumber: partIdx + 1, clef: clef)
+        
+        // Calculate available space for systems on each page
+        let availableHeight = config.pageSize.height - config.margins.top - config.margins.bottom
+        let availableWidth = config.pageSize.width - config.margins.left - config.margins.right
+        
+        // Calculate how many systems can fit on a page
+        let systemHeight = CGFloat(score.parts.count) * staffSpacing + staffHeight
+        let systemsPerPage = max(1, Int(availableHeight / (systemHeight + systemSpacing)))
+        
+        // Calculate how many measures can fit in a system
+        let measuresPerSystem = max(1, Int(availableWidth / measureWidth))
+        
+        var pages: [SalieriPage] = []
+        var currentPage = 1
+        var currentSystem = 1
+        
+        // Process each part and distribute measures across systems and pages
+        // First, get the maximum number of measures across all parts
+        let maxMeasures = score.parts.map { $0.measures.count }.max() ?? 0
+        
+        // Group measures into systems
+        let systems = stride(from: 0, to: maxMeasures, by: measuresPerSystem).map { startIndex in
+            let endIndex = min(startIndex + measuresPerSystem, maxMeasures)
+            return (startIndex, endIndex)
         }
-        // Pagination: one system per page for now, but split if too many staves
-        let system = SalieriSystem(staves: staves, yPosition: yOffset, systemNumber: systemNumber)
-        systems.append(system)
-        let page = SalieriPage(systems: systems, pageNumber: pageNumber)
-        pages.append(page)
+        
+        // Group systems into pages
+        let pagesOfSystems = stride(from: 0, to: systems.count, by: systemsPerPage).map { startIndex in
+            let endIndex = min(startIndex + systemsPerPage, systems.count)
+            return Array(systems[startIndex..<endIndex])
+        }
+        
+        // Create pages with proper layout
+        for (pageIndex, pageSystems) in pagesOfSystems.enumerated() {
+            var pageSystemsList: [SalieriSystem] = []
+            
+            for (systemIndex, (measureStart, measureEnd)) in pageSystems.enumerated() {
+                let systemYPosition = config.margins.top + CGFloat(systemIndex) * (systemHeight + systemSpacing)
+                
+                // Create staves for this system
+                let staves: [SalieriStaff] = score.parts.enumerated().map { (partIdx, part) in
+                    let clef = SalieriClef(type: .treble, line: 2)
+                    
+                    // Get measures for this part in this system
+                    let partMeasures: [SalieriMeasure]
+                    if measureStart < part.measures.count {
+                        let endIndex = min(measureEnd, part.measures.count)
+                        partMeasures = Array(part.measures[measureStart..<endIndex])
+                    } else {
+                        partMeasures = []
+                    }
+                    
+                    let measures = partMeasures.enumerated().map { (index, measure) in
+                        createMeasureLayout(measure, measureIndex: measureStart + index, measureWidth: measureWidth, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
+                    }
+                    
+                    let staffYPosition = systemYPosition + CGFloat(partIdx) * staffSpacing
+                    return SalieriStaff(measures: measures, partName: part.name, yPosition: staffYPosition, staffNumber: partIdx + 1, clef: clef)
+                }
+                
+                let system = SalieriSystem(staves: staves, yPosition: systemYPosition, systemNumber: currentSystem)
+                pageSystemsList.append(system)
+                currentSystem += 1
+            }
+            
+            let page = SalieriPage(systems: pageSystemsList, pageNumber: currentPage)
+            pages.append(page)
+            currentPage += 1
+        }
+        
         return SalieriLayout(pages: pages)
+    }
+    
+    // Helper: Create measure layout with proper note positioning
+    private static func createMeasureLayout(_ measure: SalieriMeasure, measureIndex: Int, measureWidth: CGFloat, staffLineSpacing: CGFloat, staffHeight: CGFloat) -> SalieriMeasureLayout {
+        let notesPerBeamGroup = 2
+        var beamGroup = 0
+        var beamCount = 0
+        
+        let events: [SalieriNotehead] = measure.events.enumerated().compactMap { (eIdx, event) in
+            if case let .note(note) = event {
+                // Assign beam group
+                var group: Int? = nil
+                if note.duration == .eighth || note.duration == .sixteenth {
+                    group = beamGroup
+                    beamCount += 1
+                    if beamCount >= notesPerBeamGroup {
+                        beamGroup += 1
+                        beamCount = 0
+                    }
+                }
+                
+                // Calculate vertical position (y) based on pitch and clef
+                let clef = SalieriClef(type: .treble, line: 2)
+                let y = yForPitch(note.pitch, clef: clef, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
+                
+                // Accidentals
+                let accidental = note.accidental
+                
+                // Ledger lines
+                let ledgerLines = ledgerLinesForPitch(note.pitch, clef: clef, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
+                
+                // Stem direction (up for notes below middle line, down for above)
+                let stemDirection: SalieriStemDirection = y > staffHeight / 2 ? .up : .down
+                
+                // Calculate horizontal position with proper spacing
+                let xSpacing = calculateNoteSpacing(for: note, measureWidth: measureWidth, totalNotes: measure.events.count)
+                
+                return SalieriNotehead(note: note, x: xSpacing, y: y, accidental: accidental, ledgerLines: ledgerLines, stemDirection: stemDirection, beamGroup: group)
+            }
+            return nil
+        }
+        
+        return SalieriMeasureLayout(events: events, xPosition: CGFloat(measureIndex) * measureWidth, width: measureWidth, measureNumber: measure.number)
     }
     
     // Helper: Calculate proper note spacing to prevent overprinting
