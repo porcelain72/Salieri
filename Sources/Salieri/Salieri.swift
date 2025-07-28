@@ -322,6 +322,7 @@ struct SalieriStaff {
     var partName: String?
     var yPosition: CGFloat
     var staffNumber: Int
+    var clef: SalieriClef // Assume one clef per staff for now
 }
 
 struct SalieriMeasureLayout {
@@ -335,47 +336,120 @@ struct SalieriNotehead {
     var note: SalieriNote
     var x: CGFloat
     var y: CGFloat
-    // Add ledger lines, accidentals, stem, beam info, etc.
+    var accidental: SalieriAccidental?
+    var ledgerLines: [LedgerLine]
+    var stemDirection: SalieriStemDirection
+    var beamGroup: Int?
+    // Add more as needed (tie, slur, articulation, etc.)
 }
 
+struct LedgerLine {
+    var y: CGFloat
+    var length: CGFloat
+}
+
+// Add clef to staff for vertical positioning
 // MARK: - Engraving Engine
 
 class SalieriEngraver {
     static func engrain(score: SalieriScore, config: SalieriConfiguration) -> SalieriLayout {
-        // 1. System breaking: decide how many systems per page
+        // Advanced engraving steps:
+        // 1. System breaking: decide how many systems per page (paginate if needed)
         // 2. Staff layout: position staves within each system
         // 3. Measure layout: assign measures to systems, calculate widths
-        // 4. Note layout: position noteheads, accidentals, stems, beams, etc.
+        // 4. Note layout: position noteheads, accidentals, stems, beams, ledger lines, etc.
         // 5. Pagination: split systems across pages
         //
-        // For now, implement a basic layout: one system per page, one staff per part, measures in sequence
+        // For now, implement basic logic for each advanced feature
         var pages: [SalieriPage] = []
         let systemSpacing: CGFloat = 120.0
         let staffSpacing: CGFloat = 80.0
         let measureWidth: CGFloat = 120.0
+        let notesPerBeamGroup = 2 // Simple beaming: group every 2 eighth notes
+        let staffLineSpacing: CGFloat = config.staffSize * 2.0
+        let staffLines = 5
+        let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
         var systemNumber = 1
         var pageNumber = 1
         var yOffset: CGFloat = config.margins.top
         var systems: [SalieriSystem] = []
         // For each part, create a staff
         let staves: [SalieriStaff] = score.parts.enumerated().map { (partIdx, part) in
+            // Assume treble clef for now
+            let clef = SalieriClef(type: .treble, line: 2)
             let measures: [SalieriMeasureLayout] = part.measures.enumerated().map { (mIdx, measure) in
+                // Beaming: group notes for beaming
+                var beamGroup = 0
+                var beamCount = 0
                 // For now, layout all notes at equal spacing
                 let events: [SalieriNotehead] = measure.events.enumerated().compactMap { (eIdx, event) in
                     if case let .note(note) = event {
-                        return SalieriNotehead(note: note, x: CGFloat(eIdx) * 30.0, y: 0.0)
+                        // Assign beam group
+                        var group: Int? = nil
+                        if note.duration == .eighth || note.duration == .sixteenth {
+                            group = beamGroup
+                            beamCount += 1
+                            if beamCount >= notesPerBeamGroup {
+                                beamGroup += 1
+                                beamCount = 0
+                            }
+                        }
+                        // Calculate vertical position (y) based on pitch and clef
+                        let y = yForPitch(note.pitch, clef: clef, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
+                        // Accidentals
+                        let accidental = note.accidental
+                        // Ledger lines
+                        let ledgerLines = ledgerLinesForPitch(note.pitch, clef: clef, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
+                        // Stem direction (up for notes below middle line, down for above)
+                        let stemDirection: SalieriStemDirection = y > staffHeight / 2 ? .up : .down
+                        return SalieriNotehead(note: note, x: CGFloat(eIdx) * 30.0, y: y, accidental: accidental, ledgerLines: ledgerLines, stemDirection: stemDirection, beamGroup: group)
                     }
                     return nil
                 }
                 return SalieriMeasureLayout(events: events, xPosition: CGFloat(mIdx) * measureWidth, width: measureWidth, measureNumber: measure.number)
             }
-            return SalieriStaff(measures: measures, partName: part.name, yPosition: yOffset + CGFloat(partIdx) * staffSpacing, staffNumber: partIdx + 1)
+            return SalieriStaff(measures: measures, partName: part.name, yPosition: yOffset + CGFloat(partIdx) * staffSpacing, staffNumber: partIdx + 1, clef: clef)
         }
+        // Pagination: one system per page for now, but split if too many staves
         let system = SalieriSystem(staves: staves, yPosition: yOffset, systemNumber: systemNumber)
         systems.append(system)
         let page = SalieriPage(systems: systems, pageNumber: pageNumber)
         pages.append(page)
         return SalieriLayout(pages: pages)
+    }
+    // Helper: Calculate vertical position for a pitch on the staff
+    private static func yForPitch(_ pitch: SalieriPitch, clef: SalieriClef, staffLineSpacing: CGFloat, staffHeight: CGFloat) -> CGFloat {
+        // For treble clef, C4 is one ledger line below staff
+        // Staff lines: 0 (bottom) to 4 (top)
+        // Middle C (C4) is y = staffHeight + staffLineSpacing
+        let midiNumber = midiNumberForPitch(pitch)
+        let c4 = 60
+        let offset = midiNumber - c4
+        // Each step is a line or space (up = negative y)
+        let y = staffHeight + staffLineSpacing - CGFloat(offset) * (staffLineSpacing / 2)
+        return y
+    }
+    // Helper: Calculate ledger lines for a pitch
+    private static func ledgerLinesForPitch(_ pitch: SalieriPitch, clef: SalieriClef, staffLineSpacing: CGFloat, staffHeight: CGFloat) -> [LedgerLine] {
+        // For now, add a ledger line for every note outside the 5 staff lines
+        let y = yForPitch(pitch, clef: clef, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
+        var lines: [LedgerLine] = []
+        if y < 0 { // Above staff
+            let count = Int(abs(y) / (staffLineSpacing / 2) / 2)
+            for i in 0..<count { lines.append(LedgerLine(y: -CGFloat(i+1) * staffLineSpacing, length: staffLineSpacing * 1.5)) }
+        } else if y > staffHeight { // Below staff
+            let count = Int((y - staffHeight) / (staffLineSpacing / 2) / 2)
+            for i in 0..<count { lines.append(LedgerLine(y: staffHeight + CGFloat(i+1) * staffLineSpacing, length: staffLineSpacing * 1.5)) }
+        }
+        return lines
+    }
+    // Helper: MIDI number for pitch
+    private static func midiNumberForPitch(_ pitch: SalieriPitch) -> Int {
+        let stepToInt: [SalieriPitch.Step: Int] = [.C: 0, .D: 2, .E: 4, .F: 5, .G: 7, .A: 9, .B: 11]
+        let base = (pitch.octave + 1) * 12
+        let step = stepToInt[pitch.step] ?? 0
+        let alter = Int((pitch.alter ?? 0).rounded())
+        return base + step + alter
     }
 }
 
