@@ -817,19 +817,19 @@ final class SalieriTests: XCTestCase {
         let melodyTrack = createMusicTrack(in: sequence)
         let bassTrack = createMusicTrack(in: sequence)
         
-        // Melody: 15 measures
+        // Melody: 15 measures (treble clef range)
         for measureIndex in 0..<15 {
             for noteIndex in 0..<4 {
-                let noteNumber = 60 + (noteIndex % 8) // C major scale
+                let noteNumber = 60 + (noteIndex % 8) // C4 to G4 (middle C and up)
                 var note = MIDINoteMessage(channel: 0, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 1.0)
                 MusicTrackNewMIDINoteEvent(melodyTrack, Double(measureIndex * 4 + noteIndex), &note)
             }
         }
         
-        // Bass: 12 measures (shorter)
+        // Bass: 12 measures (bass clef range - not too low)
         for measureIndex in 0..<12 {
             for noteIndex in 0..<2 {
-                let noteNumber = 36 + (noteIndex % 4) // Low C, D, E, F
+                let noteNumber = 48 + (noteIndex % 4) // C3, D3, E3, F3 (typical bass range)
                 var note = MIDINoteMessage(channel: 1, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 2.0)
                 MusicTrackNewMIDINoteEvent(bassTrack, Double(measureIndex * 4 + noteIndex * 2), &note)
             }
@@ -855,6 +855,7 @@ final class SalieriTests: XCTestCase {
                 try data.write(to: tempURL)
                 print("Multi-track wrapping test PDF saved to: \(tempURL.path)")
                 print("PDF has \(pdf.pageCount) pages")
+                print("Melody: C4-G4 range, Bass: C3-F3 range (typical ranges)")
             } catch {
                 print("Failed to save multi-track wrapping test PDF: \(error)")
             }
@@ -943,6 +944,55 @@ final class SalieriTests: XCTestCase {
                 print("Check that each page has 4-6 systems (professional density)")
             } catch {
                 print("Failed to save systems per page test PDF: \(error)")
+            }
+        }
+        #endif
+    }
+    
+    func testClefSelectionForNoteRanges() {
+        let sequence = createMusicSequence()
+        
+        // Create tracks with different note ranges
+        let trebleTrack = createMusicTrack(in: sequence)
+        let bassTrack = createMusicTrack(in: sequence)
+        
+        // Treble clef range (higher notes)
+        for i in 0..<4 {
+            let noteNumber = 60 + i // C4, D4, E4, F4 (middle C and up)
+            var note = MIDINoteMessage(channel: 0, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 1.0)
+            MusicTrackNewMIDINoteEvent(trebleTrack, Double(i), &note)
+        }
+        
+        // Bass clef range (lower notes)
+        for i in 0..<4 {
+            let noteNumber = 48 + i // C3, D3, E3, F3 (typical bass range)
+            var note = MIDINoteMessage(channel: 1, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 1.0)
+            MusicTrackNewMIDINoteEvent(bassTrack, Double(i), &note)
+        }
+        
+        let config = SalieriConfiguration(
+            pageSize: CGSize(width: 612, height: 792),
+            margins: EdgeInsets(top: 72, left: 72, bottom: 72, right: 72),
+            staffSize: 8.0
+        )
+        
+        let salieri = Salieri(configuration: config)
+        let pdfDocument = salieri.renderPDF(from: sequence)
+        
+        XCTAssertNotNil(pdfDocument)
+        
+        // Save for visual inspection of clef selection
+        #if DEBUG
+        if let pdf = pdfDocument, let data = pdf.dataRepresentation() {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("clef_selection_test.pdf")
+            do {
+                try data.write(to: tempURL)
+                print("Clef selection test PDF saved to: \(tempURL.path)")
+                print("Top track: C4-F4 (should use treble clef)")
+                print("Bottom track: C3-F3 (should use bass clef)")
+                print("Note: Currently both use treble clef - clef selection needs implementation")
+            } catch {
+                print("Failed to save clef selection test PDF: \(error)")
             }
         }
         #endif

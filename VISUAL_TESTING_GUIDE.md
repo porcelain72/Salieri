@@ -62,6 +62,8 @@ The visual regression tests generate the following PDF files in the temporary di
   - ✅ Different track lengths handled correctly
   - ✅ Systems align across tracks
   - ✅ Proper pagination for complex scores
+  - ✅ Melody: C4-G4 range (treble clef appropriate)
+  - ✅ Bass: C3-F3 range (typical bass range, minimal ledger lines)
 
 ### 7. `bar_line_alignment_test.pdf`
 - **Purpose**: Test bar line alignment with system edges
@@ -81,11 +83,20 @@ The visual regression tests generate the following PDF files in the temporary di
   - ✅ Efficient use of page space
   - ✅ Readable but compact layout
 
+### 9. `clef_selection_test.pdf`
+- **Purpose**: Test clef selection for different note ranges
+- **Content**: Two tracks with different note ranges
+- **What to Check**:
+  - ✅ Top track: C4-F4 (should use treble clef)
+  - ✅ Bottom track: C3-F3 (should use bass clef)
+  - ✅ Note: Currently both use treble clef (clef selection needs implementation)
+  - ✅ No excessive ledger lines for typical note ranges
+
 ## How to Run Visual Tests
 
 ### Run All Visual Tests
 ```bash
-swift test --filter "testVisualOutputQuality|testProperScalingAndPositioning|testClefAndTimeSignatureRendering|testNoteOverprintingPrevention|testStaffWrappingAndPagination|testMultiTrackStaffWrapping|testBarLineAlignmentWithSystemEdges|testSystemsPerPage"
+swift test --filter "testVisualOutputQuality|testProperScalingAndPositioning|testClefAndTimeSignatureRendering|testNoteOverprintingPrevention|testStaffWrappingAndPagination|testMultiTrackStaffWrapping|testBarLineAlignmentWithSystemEdges|testSystemsPerPage|testClefSelectionForNoteRanges"
 ```
 
 ### Run Individual Tests
@@ -113,6 +124,9 @@ swift test --filter testBarLineAlignmentWithSystemEdges
 
 # Systems per page density
 swift test --filter testSystemsPerPage
+
+# Clef selection for note ranges
+swift test --filter testClefSelectionForNoteRanges
 ```
 
 ## Visual Quality Checklist
