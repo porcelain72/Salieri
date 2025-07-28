@@ -862,6 +862,46 @@ final class SalieriTests: XCTestCase {
         #endif
     }
     
+    func testBarLineAlignmentWithSystemEdges() {
+        let sequence = createMusicSequence()
+        let track = createMusicTrack(in: sequence)
+        
+        // Create exactly 6 measures (should fit nicely in 2 systems of 3 measures each)
+        for measureIndex in 0..<6 {
+            for noteIndex in 0..<2 {
+                let noteNumber = 60 + (noteIndex % 4) // C, D, E, F
+                var note = MIDINoteMessage(channel: 0, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 2.0)
+                MusicTrackNewMIDINoteEvent(track, Double(measureIndex * 4 + noteIndex * 2), &note)
+            }
+        }
+        
+        let config = SalieriConfiguration(
+            pageSize: CGSize(width: 612, height: 792), // US Letter
+            margins: EdgeInsets(top: 72, left: 72, bottom: 72, right: 72),
+            staffSize: 8.0
+        )
+        
+        let salieri = Salieri(configuration: config)
+        let pdfDocument = salieri.renderPDF(from: sequence)
+        
+        XCTAssertNotNil(pdfDocument)
+        
+        // Save for visual inspection of bar line alignment
+        #if DEBUG
+        if let pdf = pdfDocument, let data = pdf.dataRepresentation() {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("bar_line_alignment_test.pdf")
+            do {
+                try data.write(to: tempURL)
+                print("Bar line alignment test PDF saved to: \(tempURL.path)")
+                print("PDF has \(pdf.pageCount) pages")
+                print("Check that bar lines align with system edges and each system has exactly 3 measures")
+            } catch {
+                print("Failed to save bar line alignment test PDF: \(error)")
+            }
+        }
+        #endif
+    }
+    
     // MARK: - Helper Methods
     
     private func createMusicSequence() -> MusicSequence {

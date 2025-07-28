@@ -345,6 +345,7 @@ struct SalieriSystem {
     var staves: [SalieriStaff]
     var yPosition: CGFloat
     var systemNumber: Int
+    var width: CGFloat
 }
 
 struct SalieriStaff {
@@ -407,7 +408,11 @@ class SalieriEngraver {
         let systemsPerPage = max(1, Int(availableHeight / (systemHeight + systemSpacing)))
         
         // Calculate how many measures can fit in a system
+        // Ensure we have an integer number of measures that fits within the available width
         let measuresPerSystem = max(1, Int(availableWidth / measureWidth))
+        
+        // Adjust system width to exactly fit the integer number of measures
+        let systemWidth = CGFloat(measuresPerSystem) * measureWidth
         
         var pages: [SalieriPage] = []
         var currentPage = 1
@@ -417,10 +422,15 @@ class SalieriEngraver {
         // First, get the maximum number of measures across all parts
         let maxMeasures = score.parts.map { $0.measures.count }.max() ?? 0
         
-        // Group measures into systems
-        let systems = stride(from: 0, to: maxMeasures, by: measuresPerSystem).map { startIndex in
-            let endIndex = min(startIndex + measuresPerSystem, maxMeasures)
-            return (startIndex, endIndex)
+        // Group measures into systems with proper integer measure counts
+        var systems: [(startIndex: Int, endIndex: Int, systemWidth: CGFloat)] = []
+        var currentMeasure = 0
+        
+        while currentMeasure < maxMeasures {
+            let measuresInThisSystem = min(measuresPerSystem, maxMeasures - currentMeasure)
+            let systemWidth = CGFloat(measuresInThisSystem) * measureWidth
+            systems.append((startIndex: currentMeasure, endIndex: currentMeasure + measuresInThisSystem, systemWidth: systemWidth))
+            currentMeasure += measuresInThisSystem
         }
         
         // Group systems into pages
@@ -430,10 +440,10 @@ class SalieriEngraver {
         }
         
         // Create pages with proper layout
-        for (pageIndex, pageSystems) in pagesOfSystems.enumerated() {
+        for (_, pageSystems) in pagesOfSystems.enumerated() {
             var pageSystemsList: [SalieriSystem] = []
             
-            for (systemIndex, (measureStart, measureEnd)) in pageSystems.enumerated() {
+            for (systemIndex, (measureStart, measureEnd, systemWidth)) in pageSystems.enumerated() {
                 let systemYPosition = config.margins.top + CGFloat(systemIndex) * (systemHeight + systemSpacing)
                 
                 // Create staves for this system
@@ -450,14 +460,14 @@ class SalieriEngraver {
                     }
                     
                     let measures = partMeasures.enumerated().map { (index, measure) in
-                        createMeasureLayout(measure, measureIndex: measureStart + index, measureWidth: measureWidth, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
+                        createMeasureLayout(measure, localMeasureIndex: index, measureWidth: measureWidth, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
                     }
                     
                     let staffYPosition = systemYPosition + CGFloat(partIdx) * staffSpacing
                     return SalieriStaff(measures: measures, partName: part.name, yPosition: staffYPosition, staffNumber: partIdx + 1, clef: clef)
                 }
                 
-                let system = SalieriSystem(staves: staves, yPosition: systemYPosition, systemNumber: currentSystem)
+                let system = SalieriSystem(staves: staves, yPosition: systemYPosition, systemNumber: currentSystem, width: systemWidth)
                 pageSystemsList.append(system)
                 currentSystem += 1
             }
@@ -471,7 +481,7 @@ class SalieriEngraver {
     }
     
     // Helper: Create measure layout with proper note positioning
-    private static func createMeasureLayout(_ measure: SalieriMeasure, measureIndex: Int, measureWidth: CGFloat, staffLineSpacing: CGFloat, staffHeight: CGFloat) -> SalieriMeasureLayout {
+    private static func createMeasureLayout(_ measure: SalieriMeasure, localMeasureIndex: Int, measureWidth: CGFloat, staffLineSpacing: CGFloat, staffHeight: CGFloat) -> SalieriMeasureLayout {
         let notesPerBeamGroup = 2
         var beamGroup = 0
         var beamCount = 0
@@ -510,7 +520,7 @@ class SalieriEngraver {
             return nil
         }
         
-        return SalieriMeasureLayout(events: events, xPosition: CGFloat(measureIndex) * measureWidth, width: measureWidth, measureNumber: measure.number)
+        return SalieriMeasureLayout(events: events, xPosition: CGFloat(localMeasureIndex) * measureWidth, width: measureWidth, measureNumber: measure.number)
     }
     
     // Helper: Calculate proper note spacing to prevent overprinting
@@ -604,11 +614,11 @@ class SalieriPDFRenderer {
     
     private static func drawSystem(_ system: SalieriSystem, context: CGContext, config: SalieriConfiguration) {
         for staff in system.staves {
-            drawStaff(staff, context: context, config: config)
+            drawStaff(staff, systemWidth: system.width, context: context, config: config)
         }
     }
     
-    private static func drawStaff(_ staff: SalieriStaff, context: CGContext, config: SalieriConfiguration) {
+    private static func drawStaff(_ staff: SalieriStaff, systemWidth: CGFloat, context: CGContext, config: SalieriConfiguration) {
         let staffLineSpacing: CGFloat = config.staffSize * 1.5 // Match engraving spacing
         let staffLines = 5
         let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
@@ -617,13 +627,13 @@ class SalieriPDFRenderer {
         // Draw clef at the beginning of the staff
         drawClef(staff.clef, at: CGPoint(x: config.margins.left + 20, y: yBase), context: context, config: config)
         
-        // Draw staff lines
+        // Draw staff lines to system width
         context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
         context.setLineWidth(1.0)
         for i in 0..<staffLines {
             let y = yBase + CGFloat(i) * staffLineSpacing
             context.move(to: CGPoint(x: config.margins.left + 60, y: y)) // Start after clef
-            context.addLine(to: CGPoint(x: config.pageSize.width - config.margins.right, y: y))
+            context.addLine(to: CGPoint(x: config.margins.left + 60 + systemWidth, y: y)) // End at system width
         }
         context.strokePath()
         

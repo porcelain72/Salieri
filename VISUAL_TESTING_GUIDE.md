@@ -63,11 +63,20 @@ The visual regression tests generate the following PDF files in the temporary di
   - ✅ Systems align across tracks
   - ✅ Proper pagination for complex scores
 
+### 7. `bar_line_alignment_test.pdf`
+- **Purpose**: Test bar line alignment with system edges
+- **Content**: 6 measures in 2 systems (3 measures each)
+- **What to Check**:
+  - ✅ Bar lines align exactly with system edges
+  - ✅ Each system contains integer number of measures
+  - ✅ Staff lines end at system boundaries
+  - ✅ No partial measures or misaligned bar lines
+
 ## How to Run Visual Tests
 
 ### Run All Visual Tests
 ```bash
-swift test --filter "testVisualOutputQuality|testProperScalingAndPositioning|testClefAndTimeSignatureRendering|testNoteOverprintingPrevention|testStaffWrappingAndPagination|testMultiTrackStaffWrapping"
+swift test --filter "testVisualOutputQuality|testProperScalingAndPositioning|testClefAndTimeSignatureRendering|testNoteOverprintingPrevention|testStaffWrappingAndPagination|testMultiTrackStaffWrapping|testBarLineAlignmentWithSystemEdges"
 ```
 
 ### Run Individual Tests
@@ -89,6 +98,9 @@ swift test --filter testStaffWrappingAndPagination
 
 # Multi-track staff wrapping
 swift test --filter testMultiTrackStaffWrapping
+
+# Bar line alignment
+swift test --filter testBarLineAlignmentWithSystemEdges
 ```
 
 ## Visual Quality Checklist
