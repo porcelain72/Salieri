@@ -71,6 +71,17 @@ if let pdf = salieri.renderPDF(fromMIDIFileAt: midiFileURL) {
 }
 ```
 
+## Documentation
+
+### SMuFL Standards
+For detailed information about the SMuFL (Standard Music Font Layout) standards and glyph registration guidelines used in Salieri, see [SMuFL_Standards.md](SMuFL_Standards.md).
+
+### Other Documentation
+- [CHANGELOG.md](CHANGELOG.md) - Version history and changes
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Guidelines for contributors
+- [TEST_COVERAGE.md](TEST_COVERAGE.md) - Testing strategy and coverage
+- [VISUAL_TESTING_GUIDE.md](VISUAL_TESTING_GUIDE.md) - Visual testing procedures
+
 ## Configuration
 
 ### Custom Page Layout

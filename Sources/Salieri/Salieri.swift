@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import CoreText
 import PDFKit
 import AudioToolbox
 
@@ -41,6 +42,8 @@ public class Salieri {
     
     public init(configuration: SalieriConfiguration = SalieriConfiguration()) {
         self.configuration = configuration
+        // Initialize SMuFL font
+        SalieriSMuFLRenderer.initializeSMuFLFont()
     }
     
     /// Ingest a MusicSequence and return a PDF document
@@ -389,9 +392,7 @@ class SalieriEngraver {
         
         let systemSpacing: CGFloat = 40.0 // Further reduced for professional density (4-6 systems per page)
         let staffSpacing: CGFloat = 35.0 // Further reduced for tighter multi-track spacing
-        let measureWidth: CGFloat = 200.0 // Increased for better spacing
-        let notesPerBeamGroup = 2 // Simple beaming: group every 2 eighth notes
-        let staffLineSpacing: CGFloat = config.staffSize * 1.5 // Reduced spacing
+        let staffLineSpacing: CGFloat = config.staffSize * 1.0 // Reduced spacing by one third
         let staffLines = 5
         let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
         
@@ -403,31 +404,15 @@ class SalieriEngraver {
         let systemHeight = CGFloat(score.parts.count) * staffSpacing + staffHeight
         let systemsPerPage = max(1, Int(availableHeight / (systemHeight + systemSpacing)))
         
-        // Calculate how many measures can fit in a system
-        // Ensure we have an integer number of measures that fits within the available width
-        let measuresPerSystem = max(1, Int(availableWidth / measureWidth))
+        // Calculate measure widths based on content
+        let measureWidths = calculateMeasureWidths(for: score, availableWidth: availableWidth, staffHeight: staffHeight)
         
-        // Adjust system width to exactly fit the integer number of measures
-        let systemWidth = CGFloat(measuresPerSystem) * measureWidth
+        // Group measures into systems
+        let systems = groupMeasuresIntoSystems(measureWidths: measureWidths, availableWidth: availableWidth)
         
         var pages: [SalieriPage] = []
         var currentPage = 1
         var currentSystem = 1
-        
-        // Process each part and distribute measures across systems and pages
-        // First, get the maximum number of measures across all parts
-        let maxMeasures = score.parts.map { $0.measures.count }.max() ?? 0
-        
-        // Group measures into systems with proper integer measure counts
-        var systems: [(startIndex: Int, endIndex: Int, systemWidth: CGFloat)] = []
-        var currentMeasure = 0
-        
-        while currentMeasure < maxMeasures {
-            let measuresInThisSystem = min(measuresPerSystem, maxMeasures - currentMeasure)
-            let systemWidth = CGFloat(measuresInThisSystem) * measureWidth
-            systems.append((startIndex: currentMeasure, endIndex: currentMeasure + measuresInThisSystem, systemWidth: systemWidth))
-            currentMeasure += measuresInThisSystem
-        }
         
         // Group systems into pages
         let pagesOfSystems = stride(from: 0, to: systems.count, by: systemsPerPage).map { startIndex in
@@ -456,8 +441,13 @@ class SalieriEngraver {
                         partMeasures = []
                     }
                     
+                    var accumulatedWidth: CGFloat = 0
                     let measures = partMeasures.enumerated().map { (index, measure) in
-                        createMeasureLayout(measure, localMeasureIndex: index, measureWidth: measureWidth, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight, clef: clef)
+                        let measureWidth = measureWidths[measureStart + index]
+                        let measureLayout = createMeasureLayout(measure, localMeasureIndex: index, measureWidth: measureWidth, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight, clef: clef)
+                        let positionedMeasure = SalieriMeasureLayout(events: measureLayout.events, xPosition: accumulatedWidth, width: measureWidth, measureNumber: measureLayout.measureNumber)
+                        accumulatedWidth += measureWidth
+                        return positionedMeasure
                     }
                     
                     let staffYPosition = systemYPosition + CGFloat(partIdx) * staffSpacing
@@ -475,6 +465,100 @@ class SalieriEngraver {
         }
         
         return SalieriLayout(pages: pages)
+    }
+    
+    // Helper: Calculate measure widths based on content
+    private static func calculateMeasureWidths(for score: SalieriScore, availableWidth: CGFloat, staffHeight: CGFloat) -> [CGFloat] {
+        let maxMeasures = score.parts.map { $0.measures.count }.max() ?? 0
+        var measureWidths: [CGFloat] = []
+        
+        // Space needed for clef, time signature, and key signature in first measure
+        let clefWidth = staffHeight * 0.9 // Clef width
+        let timeSignatureWidth = staffHeight * 0.8 * 2 // Time signature width (numerator + denominator)
+        let keySignatureWidth = staffHeight * 0.6 * 0 // No key signature for now
+        let firstMeasureMinWidth = clefWidth + timeSignatureWidth + keySignatureWidth + staffHeight * 2.0 // Additional spacing
+        
+        // Minimum spacing between notes
+        let minNoteSpacing = staffHeight * 0.5
+        
+        for measureIndex in 0..<maxMeasures {
+            var measureWidth: CGFloat = 0
+            
+            if measureIndex == 0 {
+                // First measure needs space for clef, time signature, and key signature
+                measureWidth = firstMeasureMinWidth
+            }
+            
+            // Add space for notes in this measure
+            for part in score.parts {
+                if measureIndex < part.measures.count {
+                    let measure = part.measures[measureIndex]
+                    let noteCount = measure.events.compactMap { event in
+                        if case .note(_) = event { return event }
+                        return nil
+                    }.count
+                    
+                    if noteCount > 0 {
+                        let noteSpacing = minNoteSpacing * CGFloat(noteCount - 1)
+                        let noteWidths = measure.events.compactMap { event in
+                            if case let .note(note) = event {
+                                return calculateNoteWidth(for: note, staffHeight: staffHeight)
+                            }
+                            return nil
+                        }
+                        let totalNoteWidth = noteWidths.reduce(0, +)
+                        let measureNoteWidth = totalNoteWidth + noteSpacing
+                        
+                        if measureIndex == 0 {
+                            // Add note space after clef/time signature
+                            measureWidth = max(measureWidth, firstMeasureMinWidth + measureNoteWidth)
+                        } else {
+                            // Regular measure width
+                            measureWidth = max(measureWidth, measureNoteWidth)
+                        }
+                    }
+                }
+            }
+            
+            // Ensure minimum width
+            measureWidth = max(measureWidth, staffHeight * 3.0)
+            measureWidths.append(measureWidth)
+        }
+        
+        return measureWidths
+    }
+    
+    // Helper: Group measures into systems
+    private static func groupMeasuresIntoSystems(measureWidths: [CGFloat], availableWidth: CGFloat) -> [(startIndex: Int, endIndex: Int, systemWidth: CGFloat)] {
+        var systems: [(startIndex: Int, endIndex: Int, systemWidth: CGFloat)] = []
+        var currentMeasure = 0
+        
+        while currentMeasure < measureWidths.count {
+            var systemWidth: CGFloat = 0
+            var measuresInSystem = 0
+            
+            // Try to fit as many measures as possible in this system
+            while currentMeasure + measuresInSystem < measureWidths.count {
+                let nextMeasureWidth = measureWidths[currentMeasure + measuresInSystem]
+                if systemWidth + nextMeasureWidth <= availableWidth {
+                    systemWidth += nextMeasureWidth
+                    measuresInSystem += 1
+                } else {
+                    break
+                }
+            }
+            
+            // Ensure we have at least one measure
+            if measuresInSystem == 0 {
+                measuresInSystem = 1
+                systemWidth = measureWidths[currentMeasure]
+            }
+            
+            systems.append((startIndex: currentMeasure, endIndex: currentMeasure + measuresInSystem, systemWidth: systemWidth))
+            currentMeasure += measuresInSystem
+        }
+        
+        return systems
     }
     
     // Helper: Select appropriate clef based on note ranges in a part
@@ -539,43 +623,59 @@ class SalieriEngraver {
                 let stemDirection: SalieriStemDirection = y > staffHeight / 2 ? .up : .down
                 
                 // Calculate horizontal position within the measure
-                let xPosition = calculateNotePosition(for: note, measureIndex: eIdx, measureWidth: measureWidth, totalNotes: measure.events.count)
+                let xPosition = calculateNotePosition(for: note, measureIndex: eIdx, measureWidth: measureWidth, totalNotes: measure.events.count, isFirstMeasure: localMeasureIndex == 0, staffHeight: staffHeight)
                 
                 return SalieriNotehead(note: note, x: xPosition, y: y, accidental: accidental, ledgerLines: ledgerLines, stemDirection: stemDirection, beamGroup: group)
             }
             return nil
         }
         
-        return SalieriMeasureLayout(events: events, xPosition: CGFloat(localMeasureIndex) * measureWidth, width: measureWidth, measureNumber: measure.number)
+        return SalieriMeasureLayout(events: events, xPosition: 0, width: measureWidth, measureNumber: measure.number)
     }
     
     // Helper: Calculate note position within a measure
-    private static func calculateNotePosition(for note: SalieriNote, measureIndex: Int, measureWidth: CGFloat, totalNotes: Int) -> CGFloat {
-        // Calculate the duration-based width for this note
-        let noteWidth = calculateNoteWidth(for: note, measureWidth: measureWidth, totalNotes: totalNotes)
-        
+    private static func calculateNotePosition(for note: SalieriNote, measureIndex: Int, measureWidth: CGFloat, totalNotes: Int, isFirstMeasure: Bool = false, staffHeight: CGFloat) -> CGFloat {
         // Calculate the starting position by accumulating widths of previous notes
         var startPosition: CGFloat = 0
-        // For now, use simple equal spacing, but this could be enhanced with proper rhythmic positioning
-        startPosition = (measureWidth / CGFloat(max(totalNotes, 1))) * CGFloat(measureIndex)
+        
+        // If this is the first measure, reserve space for clef, time signature, and key signature
+        if isFirstMeasure {
+            let clefWidth = staffHeight * 0.9
+            let timeSignatureWidth = staffHeight * 0.8 * 2
+            let keySignatureWidth = staffHeight * 0.6 * 0 // No key signature for now
+            let spacing = staffHeight * 1.0
+            startPosition = clefWidth + timeSignatureWidth + keySignatureWidth + spacing
+        }
+        
+        // Calculate note width and spacing
+        _ = calculateNoteWidth(for: note, staffHeight: staffHeight)
+        let minSpacing = staffHeight * 0.5
+        
+        // Position based on previous notes
+        if measureIndex > 0 {
+            // For now, use simple spacing, but this could be enhanced with proper rhythmic positioning
+            startPosition += minSpacing * CGFloat(measureIndex)
+        }
         
         return startPosition
     }
     
     // Helper: Calculate note width based on duration
-    private static func calculateNoteWidth(for note: SalieriNote, measureWidth: CGFloat, totalNotes: Int) -> CGFloat {
-        let baseWidth = measureWidth / CGFloat(max(totalNotes, 1))
+    private static func calculateNoteWidth(for note: SalieriNote, staffHeight: CGFloat) -> CGFloat {
+        let staffLineSpacing = staffHeight / 4.0 // Convert staff height back to line spacing
+        // SMuFL specification: noteheads are approximately 0.6 staff spaces wide
+        let baseWidth = staffLineSpacing * 0.6 // Note head width (SMuFL standard)
         let durationMultiplier: CGFloat
         switch note.duration {
-        case .whole: durationMultiplier = 4.0
-        case .half: durationMultiplier = 2.0
+        case .whole: durationMultiplier = 1.0
+        case .half: durationMultiplier = 1.0
         case .quarter: durationMultiplier = 1.0
-        case .eighth: durationMultiplier = 0.5
-        case .sixteenth: durationMultiplier = 0.25
-        case .thirtySecond: durationMultiplier = 0.125
-        case .sixtyFourth: durationMultiplier = 0.0625
-        case .dotted(_, _): durationMultiplier = 1.5 // Approximate
-        case .custom(let v): durationMultiplier = CGFloat(v)
+        case .eighth: durationMultiplier = 1.0
+        case .sixteenth: durationMultiplier = 1.0
+        case .thirtySecond: durationMultiplier = 1.0
+        case .sixtyFourth: durationMultiplier = 1.0
+        case .dotted(_, _): durationMultiplier = 1.2 // Slightly wider for dots
+        case .custom(_): durationMultiplier = 1.0
         }
         return baseWidth * durationMultiplier
     }
@@ -657,32 +757,33 @@ class SalieriPDFRenderer {
     }
     
     private static func drawStaff(_ staff: SalieriStaff, systemWidth: CGFloat, context: CGContext, config: SalieriConfiguration) {
-        let staffLineSpacing: CGFloat = config.staffSize * 1.5 // Match engraving spacing
+        let staffLineSpacing: CGFloat = config.staffSize * 1.0 // Reduced spacing by one third
         let staffLines = 5
         let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
         let yBase = staff.yPosition
         
-        // Draw clef at the beginning of the staff (improved positioning)
-        let clefX = config.margins.left + 20
-        let clefY = yBase + staffHeight / 2 // Center clef vertically on staff
-        drawClef(staff.clef, at: CGPoint(x: clefX, y: clefY), context: context, config: config)
-        
-        // Draw time signature after clef (if available)
-        if let firstMeasure = staff.measures.first {
-            let timeSigX = clefX + 50 // Position after clef
-            let timeSigY = yBase + staffHeight / 2
-            drawTimeSignature(firstMeasure, at: CGPoint(x: timeSigX, y: timeSigY), context: context, config: config)
-        }
-        
-        // Draw staff lines to system width
+        // Draw staff lines across full page width
         context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
         context.setLineWidth(1.0)
         for i in 0..<staffLines {
             let y = yBase + CGFloat(i) * staffLineSpacing
-            context.move(to: CGPoint(x: config.margins.left + 60, y: y)) // Start after clef
-            context.addLine(to: CGPoint(x: config.margins.left + 60 + systemWidth, y: y)) // End at system width
+            context.move(to: CGPoint(x: config.margins.left, y: y)) // Start at left margin
+            context.addLine(to: CGPoint(x: config.pageSize.width - config.margins.right, y: y)) // End at right margin
         }
         context.strokePath()
+        
+        // Draw clef and time signature within the first measure
+        if let firstMeasure = staff.measures.first {
+            let firstMeasureX = config.margins.left + firstMeasure.xPosition
+            let clefX = firstMeasureX + config.staffSize * 2.0 + staffHeight * 0.2 // Position clef within first measure, spaced half a note width to the right
+            let clefY = yBase + staffHeight / 2 // Center clef vertically on staff
+            drawClef(staff.clef, at: CGPoint(x: clefX, y: clefY), context: context, config: config)
+            
+            // Draw time signature after clef within first measure
+            let timeSigX = clefX + config.staffSize * 4.0 // Position after clef
+            let timeSigY = yBase + staffHeight / 2
+            drawTimeSignature(firstMeasure, at: CGPoint(x: timeSigX, y: timeSigY), context: context, config: config)
+        }
         
         // Draw measures
         for measure in staff.measures {
@@ -691,122 +792,33 @@ class SalieriPDFRenderer {
     }
     
     private static func drawClef(_ clef: SalieriClef, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
-        let clefSymbol: String
-        
-        switch clef.type {
-        case .treble: clefSymbol = "G" // Use "G" instead of Unicode treble clef
-        case .bass: clefSymbol = "F"   // Use "F" instead of Unicode bass clef
-        case .alto: clefSymbol = "C"   // Use "C" for alto clef
-        case .tenor: clefSymbol = "C"  // Use "C" for tenor clef
-        case .percussion: clefSymbol = "P" // Use "P" for percussion
-        case .other(_): clefSymbol = "G" // Default to treble
-        }
-        
-        // Draw professional line-based clefs
-        context.setStrokeColor(CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0)) // Black color
-        context.setLineWidth(1.5)
-        
-        switch clef.type {
-        case .treble:
-            // Draw a more detailed treble clef shape
-            let x = point.x
-            let y = point.y
-            let size = config.staffSize * 2.5
-            
-            // Main vertical line
-            context.move(to: CGPoint(x: x, y: y - size))
-            context.addLine(to: CGPoint(x: x, y: y + size))
-            
-            // Top spiral (treble clef characteristic)
-            context.move(to: CGPoint(x: x, y: y - size))
-            context.addCurve(to: CGPoint(x: x + size/3, y: y - size/2),
-                            control1: CGPoint(x: x + size/6, y: y - size),
-                            control2: CGPoint(x: x + size/3, y: y - size/2))
-            context.addCurve(to: CGPoint(x: x, y: y - size/4),
-                            control1: CGPoint(x: x + size/2, y: y - size/3),
-                            control2: CGPoint(x: x + size/4, y: y - size/4))
-            
-            // Bottom curve
-            context.move(to: CGPoint(x: x, y: y + size))
-            context.addCurve(to: CGPoint(x: x + size/3, y: y + size/2),
-                            control1: CGPoint(x: x + size/6, y: y + size),
-                            control2: CGPoint(x: x + size/3, y: y + size/2))
-            
-            context.strokePath()
-            
-        case .bass:
-            // Draw a more detailed bass clef shape
-            let x = point.x
-            let y = point.y
-            let size = config.staffSize * 2.0
-            
-            // Two dots (characteristic of bass clef)
-            context.setFillColor(CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0))
-            context.fillEllipse(in: CGRect(x: x - size/3, y: y - size/2, width: size/3, height: size/3))
-            context.fillEllipse(in: CGRect(x: x - size/3, y: y + size/6, width: size/3, height: size/3))
-            
-            // Curved line (bass clef characteristic)
-            context.setStrokeColor(CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0))
-            context.setLineWidth(1.5)
-            context.move(to: CGPoint(x: x + size/6, y: y - size/2))
-            context.addCurve(to: CGPoint(x: x + size/6, y: y + size/2),
-                            control1: CGPoint(x: x + size/2, y: y - size/4),
-                            control2: CGPoint(x: x + size/2, y: y + size/4))
-            context.strokePath()
-            
-        default:
-            // For other clef types, draw a simple symbol
-            let x = point.x
-            let y = point.y
-            let size = config.staffSize * 2.0
-            
-            context.move(to: CGPoint(x: x - size/2, y: y))
-            context.addLine(to: CGPoint(x: x + size/2, y: y))
-            context.strokePath()
-        }
+        // Use SMuFL font renderer with fallback to SVG
+        SalieriSMuFLRenderer.drawSMuFLClef(clef, at: point, context: context, config: config)
     }
     
     private static func drawTimeSignature(_ measure: SalieriMeasureLayout, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
-        // Default to 4/4 time signature for now
-        let timeSignature = "4/4"
+        // Calculate staff height for proper scaling
+        let staffLineSpacing: CGFloat = config.staffSize * 1.0
+        let staffLines = 5
+        let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
         
-        // Draw a simple line-based time signature that will definitely be visible
-        context.setStrokeColor(CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0))
-        context.setLineWidth(1.0)
+        // SMuFL specification: time signature digits should be 2 staff spaces tall (0.5 em)
+        let timeSignatureSize = staffLineSpacing * 2.0 // Time signature height = 2 staff spaces
         
-        let x = point.x
-        let y = point.y
-        let size = config.staffSize * 1.5
+        // Draw "4" for numerator - adjust Y position to center the symbol
+        let numeratorPoint = CGPoint(x: point.x, y: point.y - staffHeight * 0.25 + timeSignatureSize * 0.5)
+        SalieriSMuFLRenderer.drawSMuFLSymbol("time_signature_4", at: numeratorPoint, context: context, config: config, size: timeSignatureSize)
         
-        // Draw "4/4" as simple lines and shapes
-        // Top "4"
-        context.move(to: CGPoint(x: x - size/2, y: y - size/2))
-        context.addLine(to: CGPoint(x: x - size/2, y: y + size/2))
-        context.move(to: CGPoint(x: x - size/2, y: y))
-        context.addLine(to: CGPoint(x: x - size/6, y: y - size/2))
-        context.move(to: CGPoint(x: x - size/6, y: y - size/2))
-        context.addLine(to: CGPoint(x: x - size/6, y: y + size/2))
-        
-        // Slash
-        context.move(to: CGPoint(x: x - size/8, y: y - size/2))
-        context.addLine(to: CGPoint(x: x + size/8, y: y + size/2))
-        
-        // Bottom "4"
-        context.move(to: CGPoint(x: x + size/6, y: y - size/2))
-        context.addLine(to: CGPoint(x: x + size/6, y: y + size/2))
-        context.move(to: CGPoint(x: x + size/6, y: y))
-        context.addLine(to: CGPoint(x: x + size/2, y: y - size/2))
-        context.move(to: CGPoint(x: x + size/2, y: y - size/2))
-        context.addLine(to: CGPoint(x: x + size/2, y: y + size/2))
-        
-        context.strokePath()
+        // Draw "4" for denominator - adjust Y position to center the symbol
+        let denominatorPoint = CGPoint(x: point.x, y: point.y + staffHeight * 0.25 + timeSignatureSize * 0.5)
+        SalieriSMuFLRenderer.drawSMuFLSymbol("time_signature_4", at: denominatorPoint, context: context, config: config, size: timeSignatureSize)
     }
     
     private static func drawMeasure(_ measure: SalieriMeasureLayout, yBase: CGFloat, context: CGContext, config: SalieriConfiguration) {
         // Draw measure line at start
-        let xStart = config.margins.left + 60 + measure.xPosition // Account for clef space
+        let xStart = config.margins.left + measure.xPosition // Start from left margin
         let xEnd = xStart + measure.width
-        let staffLineSpacing: CGFloat = config.staffSize * 1.5
+        let staffLineSpacing: CGFloat = config.staffSize * 1.0
         let staffLines = 5
         let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
         
@@ -829,67 +841,341 @@ class SalieriPDFRenderer {
     }
     
     private static func drawNotehead(_ notehead: SalieriNotehead, xBase: CGFloat, yBase: CGFloat, context: CGContext, config: SalieriConfiguration) {
-        // Draw notehead as ellipse with proper scaling
-        let noteRadius = config.staffSize * 0.8 // Smaller noteheads
         let x = xBase
         let y = yBase + notehead.y
-        let noteRect = CGRect(x: x - noteRadius, y: y - noteRadius, width: noteRadius * 2, height: noteRadius * 1.5)
         
-        context.setFillColor(CGColor(gray: 0, alpha: 1.0))
-        context.fillEllipse(in: noteRect)
+        // Calculate staff height for proper scaling
+        let staffLineSpacing: CGFloat = config.staffSize * 1.0
+        let staffLines = 5
+        let staffHeight = CGFloat(staffLines - 1) * staffLineSpacing
         
-        // Draw stem with proper length
-        let stemLength = config.staffSize * 3.5
-        context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
-        context.setLineWidth(1.0)
+        // Draw SMuFL note
+        SalieriSMuFLRenderer.drawSMuFLNote(notehead, at: CGPoint(x: x, y: y), context: context, config: config)
         
-        if notehead.stemDirection == .up {
-            context.move(to: CGPoint(x: x + noteRadius, y: y))
-            context.addLine(to: CGPoint(x: x + noteRadius, y: y - stemLength))
-        } else {
-            context.move(to: CGPoint(x: x - noteRadius, y: y))
-            context.addLine(to: CGPoint(x: x - noteRadius, y: y + stemLength))
-        }
-        context.strokePath()
+        // Calculate note radius based on staff height
+        let noteRadius = staffHeight * 0.2 // Note radius should be about 20% of staff height
         
-        // Draw accidentals with proper positioning
+
+        
+        // Draw SMuFL accidental with proper positioning
         if let accidental = notehead.accidental {
-            let accidentalString = accidentalSymbol(accidental)
-            let fontSize = config.staffSize * 1.2
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: fontSize),
-                .foregroundColor: NSColor.black
-            ]
-            let attrStr = NSAttributedString(string: accidentalString, attributes: attributes)
-            let textPoint = CGPoint(x: x - noteRadius * 2.0, y: y - noteRadius * 0.5)
-            attrStr.draw(at: textPoint)
+            let accidentalPoint = CGPoint(x: x - noteRadius * 2.5, y: y - noteRadius * 0.5)
+            SalieriSMuFLRenderer.drawSMuFLAccidental(accidental, at: accidentalPoint, context: context, config: config)
         }
         
-        // Draw ledger lines with proper positioning
-        context.setStrokeColor(CGColor(gray: 0, alpha: 1.0))
-        context.setLineWidth(1.0)
+        // Draw SMuFL ledger lines
         for ledger in notehead.ledgerLines {
-            context.move(to: CGPoint(x: x - noteRadius * 1.2, y: yBase + ledger.y))
-            context.addLine(to: CGPoint(x: x + noteRadius * 1.2, y: yBase + ledger.y))
+            let ledgerPoint = CGPoint(x: x, y: yBase + ledger.y)
+            let ledgerSize = noteRadius * 3.0 // Ledger lines should be about 3x note radius
+            SalieriSMuFLRenderer.drawSMuFLSymbol("ledger_line", at: ledgerPoint, context: context, config: config, size: ledgerSize)
         }
-        context.strokePath()
     }
     
-    private static func accidentalSymbol(_ accidental: SalieriAccidental) -> String {
-        switch accidental {
-        case .sharp: return "♯"
-        case .flat: return "♭"
-        case .natural: return "♮"
-        case .doubleSharp: return "𝄪"
-        case .doubleFlat: return "𝄫"
-        case .quarterSharp: return "𝄲" // Placeholder
-        case .quarterFlat: return "𝄳" // Placeholder
-        case .threeQuarterSharp: return "𝄴" // Placeholder
-        case .threeQuarterFlat: return "𝄵" // Placeholder
-        case .other(let s): return s
+
+}
+
+// MARK: - SMuFL Font Renderer
+
+class SalieriSMuFLRenderer {
+    private static var smuflFont: CGFont?
+    private static let fontCache = NSCache<NSString, CGPath>()
+    
+    /// Initialize SMuFL font
+    static func initializeSMuFLFont() {
+        // Load SMuFL font from bundle
+        if let fontURL = Bundle.module.url(forResource: "Bravura", withExtension: "otf"),
+           let fontData = try? Data(contentsOf: fontURL),
+           let provider = CGDataProvider(data: fontData as CFData),
+           let font = CGFont(provider) {
+            
+            // Register the font with the system
+            var error: Unmanaged<CFError>?
+            if !CTFontManagerRegisterGraphicsFont(font, &error) {
+                print("Failed to register font: \(error?.takeRetainedValue().localizedDescription ?? "unknown error")")
+            } else {
+                print("Font registered successfully")
+            }
+            
+            smuflFont = font
+            print("SMuFL font loaded successfully")
+        } else {
+            print("Warning: SMuFL font not found, falling back to SVG rendering")
         }
     }
+    
+    /// Get SMuFL Unicode for musical symbol
+    private static func smuflUnicode(for symbol: String) -> UniChar? {
+        let smuflMap: [String: UniChar] = [
+            // Clefs
+            "treble_clef": 0xE050,
+            "bass_clef": 0xE062,
+            "alto_clef": 0xE05C,
+            "tenor_clef": 0xE05D,
+            "percussion_clef": 0xE069,
+            
+            // Notes
+            "whole_note": 0xE1D2,
+            "half_note": 0xE1D3,
+            "quarter_note": 0xE1D5,
+            "eighth_note": 0xE1D7,
+            "sixteenth_note": 0xE1D9,
+            "thirty_second_note": 0xE1DB,
+            "sixty_fourth_note": 0xE1DD,
+            
+            // Rests
+            "whole_rest": 0xE4E3,
+            "half_rest": 0xE4E4,
+            "quarter_rest": 0xE4E5,
+            "eighth_rest": 0xE4E6,
+            "sixteenth_rest": 0xE4E7,
+            "thirty_second_rest": 0xE4E8,
+            "sixty_fourth_rest": 0xE4E9,
+            
+            // Accidentals
+            "sharp": 0xE262,
+            "flat": 0xE260,
+            "natural": 0xE261,
+            "double_sharp": 0xE263,
+            "double_flat": 0xE264,
+            "quarter_sharp": 0xE280,
+            "quarter_flat": 0xE281,
+            "three_quarter_sharp": 0xE282,
+            "three_quarter_flat": 0xE283,
+            
+            // Time signatures
+            "time_signature_0": 0xE080,
+            "time_signature_1": 0xE081,
+            "time_signature_2": 0xE082,
+            "time_signature_3": 0xE083,
+            "time_signature_4": 0xE084,
+            "time_signature_5": 0xE085,
+            "time_signature_6": 0xE086,
+            "time_signature_7": 0xE087,
+            "time_signature_8": 0xE088,
+            "time_signature_9": 0xE089,
+            "time_signature_common": 0xE08A,
+            "time_signature_cut": 0xE08B,
+            
+            // Stems and beams
+            "stem": 0xE210,
+            "beam": 0xE1E0,
+            
+            // Ledger lines
+            "ledger_line": 0xE022,
+            
+            // Bar lines
+            "barline_single": 0xE030,
+            "barline_double": 0xE031,
+            "barline_final": 0xE032,
+            "barline_repeat_start": 0xE040,
+            "barline_repeat_end": 0xE041
+        ]
+        
+        return smuflMap[symbol]
+    }
+    
+    /// Draw SMuFL symbol at specified position
+    static func drawSMuFLSymbol(_ symbol: String, at point: CGPoint, context: CGContext, config: SalieriConfiguration, size: CGFloat? = nil) {
+        guard let unicode = smuflUnicode(for: symbol),
+              let font = smuflFont else {
+            // Fallback to simple line drawing if SMuFL symbol not found
+            drawFallbackSymbol(symbol, at: point, context: context, config: config)
+            return
+        }
+        
+        let symbolSize = size ?? config.staffSize * 2.0
+        
+        // Create attributed string with SMuFL font
+        let unicodeScalar = UnicodeScalar(unicode)!
+        let string = String(unicodeScalar)
+        
+
+        
+        // Try using the CGFont directly with Core Text
+
+        
+        // Also try with a different approach - use the font name
+        let fontName = font.postScriptName as String? ?? "Bravura"
+        let fontDescriptor = CTFontDescriptorCreateWithNameAndSize(fontName as CFString, symbolSize)
+        let ctFontByName = CTFontCreateWithFontDescriptor(fontDescriptor, 0, nil)
+        
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: ctFontByName, // Try using the font by name instead
+            .foregroundColor: NSColor.black
+        ]
+        
+        let attributedString = NSAttributedString(string: string, attributes: attributes)
+        
+        // Draw the symbol using Core Text
+        // SMuFL specification: glyphs are registered with specific baseline positions
+        let isNote = symbol.contains("note") || symbol.contains("rest")
+        let isAccidental = symbol.contains("sharp") || symbol.contains("flat") || symbol.contains("natural")
+        let isClef = symbol.contains("clef")
+        
+        let yOffset: CGFloat
+        if isNote {
+            // SMuFL: Noteheads positioned as if on bottom line of staff
+            // The notehead center should be at the staff line position
+            // In SMuFL, noteheads are vertically centered on baseline (y=0)
+            yOffset = symbolSize / 2
+        } else if isAccidental {
+            // SMuFL: Accidentals positioned as if applying to notehead on bottom line
+            // Accidentals are vertically centered on baseline
+            yOffset = symbolSize / 2
+        } else if isClef {
+            // SMuFL: Clefs positioned with pitch reference on baseline
+            // For visual centering, position the clef center at the point
+            yOffset = symbolSize / 2
+        } else {
+            // For other symbols, center the entire glyph
+            yOffset = symbolSize / 2
+        }
+        
+        context.saveGState()
+        context.translateBy(x: point.x - symbolSize/2, y: point.y - yOffset)
+        
+        // Fix the coordinate system for text rendering
+        context.scaleBy(x: 1.0, y: -1.0)
+        
+        // Set up the context for text rendering
+        context.setAllowsFontSubpixelPositioning(true)
+        context.setAllowsFontSubpixelQuantization(true)
+        context.setShouldSubpixelPositionFonts(true)
+        context.setShouldSubpixelQuantizeFonts(true)
+        
+        // Create a Core Text line and draw it
+        let line = CTLineCreateWithAttributedString(attributedString)
+        context.textPosition = CGPoint.zero
+        CTLineDraw(line, context)
+        
+        // Also try rendering a simple test character to verify font is working
+
+        
+        context.restoreGState()
+    }
+    
+    /// Draw fallback symbol using simple line drawing
+    private static func drawFallbackSymbol(_ symbol: String, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
+        context.saveGState()
+        context.setStrokeColor(CGColor(gray: 0.0, alpha: 1.0))
+        context.setLineWidth(config.staffSize * 0.1)
+        
+        // Simple fallback drawing based on symbol type
+        if symbol.contains("clef") {
+            // Draw a simple clef symbol
+            let size = config.staffSize * 2.0
+            context.strokeEllipse(in: CGRect(x: point.x - size/2, y: point.y - size/2, width: size, height: size))
+        } else if symbol.contains("note") {
+            // Draw a simple note head
+            let size = config.staffSize * 0.8
+            context.fillEllipse(in: CGRect(x: point.x - size/2, y: point.y - size/2, width: size, height: size))
+        } else {
+            // Draw a simple cross for unknown symbols
+            let size = config.staffSize * 1.0
+            context.move(to: CGPoint(x: point.x - size/2, y: point.y - size/2))
+            context.addLine(to: CGPoint(x: point.x + size/2, y: point.y + size/2))
+            context.move(to: CGPoint(x: point.x - size/2, y: point.y + size/2))
+            context.addLine(to: CGPoint(x: point.x + size/2, y: point.y - size/2))
+            context.strokePath()
+        }
+        
+        context.restoreGState()
+    }
+    
+    /// Draw SMuFL clef
+    static func drawSMuFLClef(_ clef: SalieriClef, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
+        let symbol: String
+        switch clef.type {
+        case .treble: symbol = "treble_clef"
+        case .bass: symbol = "bass_clef"
+        case .alto: symbol = "alto_clef"
+        case .tenor: symbol = "tenor_clef"
+        case .percussion: symbol = "percussion_clef"
+        case .other(_): symbol = "treble_clef"
+        }
+        
+        // Calculate staff line spacing for proper scaling
+        let staffLineSpacing: CGFloat = config.staffSize * 1.0
+        
+        // SMuFL specification: clefs should be sized to fit the staff
+        // Standard clef height is approximately 3 staff spaces
+        let clefSize = staffLineSpacing * 3.0 // Clef height = 3 staff spaces
+        
+        // Adjust Y position to position the clef lower on the staff
+        // Since the symbol is centered around the point, we need to move it down more
+        let adjustedPoint = CGPoint(x: point.x, y: point.y + clefSize * 0.8)
+        
+        drawSMuFLSymbol(symbol, at: adjustedPoint, context: context, config: config, size: clefSize)
+    }
+    
+    /// Draw SMuFL note
+    static func drawSMuFLNote(_ note: SalieriNotehead, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
+        let symbol: String
+        switch note.note.duration {
+        case .whole: symbol = "whole_note"
+        case .half: symbol = "half_note"
+        case .quarter: symbol = "quarter_note"
+        case .eighth: symbol = "eighth_note"
+        case .sixteenth: symbol = "sixteenth_note"
+        case .thirtySecond: symbol = "thirty_second_note"
+        case .sixtyFourth: symbol = "sixty_fourth_note"
+        case .dotted(_, _): symbol = "quarter_note" // Will add dot separately
+        case .custom(_): symbol = "quarter_note"
+        }
+        
+        // Calculate staff line spacing for proper scaling
+        let staffLineSpacing: CGFloat = config.staffSize * 1.0
+        
+        // SMuFL specification: one staff space = 0.25 em
+        // For proper sizing, we need to scale the glyph to match our staff line spacing
+        // If staff line spacing = 0.25 em, then 1 em = 4 × staff line spacing
+        let emSize = staffLineSpacing * 4.0 // 1 em = 4 staff spaces
+        let noteSize = emSize // Size the entire glyph to 1 em (standard SMuFL sizing)
+        
+        drawSMuFLSymbol(symbol, at: point, context: context, config: config, size: noteSize)
+        
+
+        
+        // Draw dots if needed
+        if case let .dotted(_, dots) = note.note.duration {
+            for i in 0..<dots {
+                let dotOffset = CGFloat(i + 1) * staffLineSpacing * 0.8
+                let dotPoint = CGPoint(x: point.x + dotOffset, y: point.y)
+                let dotSize = staffLineSpacing * 0.4 // Dots should be about 40% of staff line spacing
+                drawSMuFLSymbol("augmentation_dot", at: dotPoint, context: context, config: config, size: dotSize)
+            }
+        }
+    }
+    
+    /// Draw SMuFL accidental
+    static func drawSMuFLAccidental(_ accidental: SalieriAccidental, at point: CGPoint, context: CGContext, config: SalieriConfiguration) {
+        let symbol: String
+        switch accidental {
+        case .sharp: symbol = "sharp"
+        case .flat: symbol = "flat"
+        case .natural: symbol = "natural"
+        case .doubleSharp: symbol = "double_sharp"
+        case .doubleFlat: symbol = "double_flat"
+        case .quarterSharp: symbol = "quarter_sharp"
+        case .quarterFlat: symbol = "quarter_flat"
+        case .threeQuarterSharp: symbol = "three_quarter_sharp"
+        case .threeQuarterFlat: symbol = "three_quarter_flat"
+        case .other(_): symbol = "sharp"
+        }
+        
+        // Calculate staff line spacing for proper scaling
+        let staffLineSpacing: CGFloat = config.staffSize * 1.0
+        
+        // SMuFL specification: accidentals should be sized relative to staff line spacing
+        // Standard accidental height is approximately 2 staff spaces
+        let accidentalSize = staffLineSpacing * 2.0 // Accidental height = 2 staff spaces
+        
+        drawSMuFLSymbol(symbol, at: point, context: context, config: config, size: accidentalSize)
+    }
+    
+
 }
+
 
 // MARK: - MIDI Parsing (Stub)
 
