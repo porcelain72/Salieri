@@ -72,11 +72,20 @@ The visual regression tests generate the following PDF files in the temporary di
   - ✅ Staff lines end at system boundaries
   - ✅ No partial measures or misaligned bar lines
 
+### 8. `systems_per_page_test.pdf`
+- **Purpose**: Test professional system density per page
+- **Content**: 24 measures (8 systems of 3 measures each)
+- **What to Check**:
+  - ✅ 4-6 systems per page (professional density)
+  - ✅ Proper spacing between systems and staves
+  - ✅ Efficient use of page space
+  - ✅ Readable but compact layout
+
 ## How to Run Visual Tests
 
 ### Run All Visual Tests
 ```bash
-swift test --filter "testVisualOutputQuality|testProperScalingAndPositioning|testClefAndTimeSignatureRendering|testNoteOverprintingPrevention|testStaffWrappingAndPagination|testMultiTrackStaffWrapping|testBarLineAlignmentWithSystemEdges"
+swift test --filter "testVisualOutputQuality|testProperScalingAndPositioning|testClefAndTimeSignatureRendering|testNoteOverprintingPrevention|testStaffWrappingAndPagination|testMultiTrackStaffWrapping|testBarLineAlignmentWithSystemEdges|testSystemsPerPage"
 ```
 
 ### Run Individual Tests
@@ -101,6 +110,9 @@ swift test --filter testMultiTrackStaffWrapping
 
 # Bar line alignment
 swift test --filter testBarLineAlignmentWithSystemEdges
+
+# Systems per page density
+swift test --filter testSystemsPerPage
 ```
 
 ## Visual Quality Checklist

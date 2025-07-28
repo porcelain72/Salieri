@@ -902,6 +902,52 @@ final class SalieriTests: XCTestCase {
         #endif
     }
     
+    func testSystemsPerPage() {
+        let sequence = createMusicSequence()
+        let track = createMusicTrack(in: sequence)
+        
+        // Create a longer sequence to test system density
+        // Add 24 measures (should fit in multiple systems per page)
+        for measureIndex in 0..<24 {
+            for noteIndex in 0..<2 {
+                let noteNumber = 60 + (noteIndex % 4) // C, D, E, F
+                var note = MIDINoteMessage(channel: 0, note: UInt8(noteNumber), velocity: 64, releaseVelocity: 0, duration: 2.0)
+                MusicTrackNewMIDINoteEvent(track, Double(measureIndex * 4 + noteIndex * 2), &note)
+            }
+        }
+        
+        let config = SalieriConfiguration(
+            pageSize: CGSize(width: 612, height: 792), // US Letter
+            margins: EdgeInsets(top: 72, left: 72, bottom: 72, right: 72),
+            staffSize: 8.0
+        )
+        
+        let salieri = Salieri(configuration: config)
+        let pdfDocument = salieri.renderPDF(from: sequence)
+        
+        XCTAssertNotNil(pdfDocument)
+        
+        // For a 24-measure piece, we should get more than 2 systems per page
+        // With 3 measures per system, we should have 8 systems total
+        // With proper spacing, this should fit on 2-3 pages (3-4 systems per page)
+        XCTAssertLessThanOrEqual(pdfDocument?.pageCount ?? 0, 3, "24 measures should fit on 3 pages or fewer")
+        
+        // Save for visual inspection
+        #if DEBUG
+        if let pdf = pdfDocument, let data = pdf.dataRepresentation() {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("systems_per_page_test.pdf")
+            do {
+                try data.write(to: tempURL)
+                print("Systems per page test PDF saved to: \(tempURL.path)")
+                print("PDF has \(pdf.pageCount) pages")
+                print("Check that each page has 4-6 systems (professional density)")
+            } catch {
+                print("Failed to save systems per page test PDF: \(error)")
+            }
+        }
+        #endif
+    }
+    
     // MARK: - Helper Methods
     
     private func createMusicSequence() -> MusicSequence {

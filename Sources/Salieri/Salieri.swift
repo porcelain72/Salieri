@@ -391,8 +391,8 @@ class SalieriEngraver {
         // 4. Note layout: position noteheads, accidentals, stems, beams, ledger lines, etc.
         // 5. Pagination: split systems across pages
         
-        let systemSpacing: CGFloat = 120.0
-        let staffSpacing: CGFloat = 80.0
+        let systemSpacing: CGFloat = 40.0 // Further reduced for professional density (4-6 systems per page)
+        let staffSpacing: CGFloat = 35.0 // Further reduced for tighter multi-track spacing
         let measureWidth: CGFloat = 200.0 // Increased for better spacing
         let notesPerBeamGroup = 2 // Simple beaming: group every 2 eighth notes
         let staffLineSpacing: CGFloat = config.staffSize * 1.5 // Reduced spacing
