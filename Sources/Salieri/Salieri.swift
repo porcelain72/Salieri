@@ -178,22 +178,18 @@ struct SalieriScore {
                     metaData[i] = rawBuf[i]
                 }
             }
-            print("[DEBUG] metaEventType: \(meta.metaEventType), dataLength: \(meta.dataLength), metaData[0..4]:", metaData[0], metaData[1], metaData[2], metaData[3])
             if meta.metaEventType == 0x58, meta.dataLength >= 4 {
                 let num = Int(metaData[0])
                 let denom = Int(pow(2.0, Double(metaData[1])))
-                print("[DEBUG] Parsed time signature: num=\(num), denom=\(denom)")
                 let ts = SalieriTimeSignature(numerator: num, denominator: denom)
                 return .timeSignature(ts)
             }
             if meta.metaEventType == 0x59, meta.dataLength >= 2 {
                 let fifths = Int(Int8(bitPattern: metaData[0]))
                 let mode = metaData[1] == 0 ? SalieriKeySignature.KeyMode.major : .minor
-                print("[DEBUG] Parsed key signature: fifths=\(fifths), mode=\(mode)")
                 let ks = SalieriKeySignature(fifths: fifths, mode: mode)
                 return .keySignature(ks)
             }
-            print("[DEBUG] Meta event not parsed: type=\(meta.metaEventType), length=\(meta.dataLength)")
         }
         // TODO: Map clef (not in MIDI, can infer or set default)
         // TODO: Extend for other event types (barlines, tuplets, etc.)
@@ -699,16 +695,17 @@ class SalieriPDFRenderer {
         let clefSymbol: String
         
         switch clef.type {
-        case .treble: clefSymbol = "𝄞"
-        case .bass: clefSymbol = "𝄢"
-        case .alto: clefSymbol = "𝄡"
-        case .tenor: clefSymbol = "𝄡"
-        case .percussion: clefSymbol = "𝄤"
-        case .other(_): clefSymbol = "𝄞" // Default to treble
+        case .treble: clefSymbol = "G" // Use "G" instead of Unicode treble clef
+        case .bass: clefSymbol = "F"   // Use "F" instead of Unicode bass clef
+        case .alto: clefSymbol = "C"   // Use "C" for alto clef
+        case .tenor: clefSymbol = "C"  // Use "C" for tenor clef
+        case .percussion: clefSymbol = "P" // Use "P" for percussion
+        case .other(_): clefSymbol = "G" // Default to treble
         }
         
-        // Use a more reliable font for musical symbols
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        // Use a simple, reliable font
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+        
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor.black
@@ -727,6 +724,7 @@ class SalieriPDFRenderer {
         let fontSize = config.staffSize * 2.5
         
         let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor.black

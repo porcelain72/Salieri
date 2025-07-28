@@ -31,10 +31,11 @@ The visual regression tests generate the following PDF files in the temporary di
 - **Purpose**: Test clef and time signature rendering
 - **Content**: Simple score with clef and time signature
 - **What to Check**:
-  - ✅ Treble clef (𝄞) is visible and properly positioned
-  - ✅ Time signature (4/4) is visible after the clef
+  - ✅ Treble clef ("G") is visible and properly positioned
+  - ✅ Time signature ("4/4") is visible after the clef
   - ✅ Clef and time signature are centered on the staff
   - ✅ Proper font size and positioning
+  - ✅ Simple text characters for reliable rendering
 
 ### 4. `overprint_test_output.pdf`
 - **Purpose**: Test note overprinting prevention
@@ -88,11 +89,12 @@ The visual regression tests generate the following PDF files in the temporary di
 - **Purpose**: Test automatic clef selection for different note ranges
 - **Content**: Two tracks with different note ranges
 - **What to Check**:
-  - ✅ Top track: C4-F4 (treble clef automatically selected)
-  - ✅ Bottom track: C3-F3 (bass clef automatically selected)
+  - ✅ Top track: C4-F4 (treble clef "G" automatically selected)
+  - ✅ Bottom track: C3-F3 (bass clef "F" automatically selected)
   - ✅ Clefs are properly positioned and visible
   - ✅ No excessive ledger lines for typical note ranges
   - ✅ Professional clef selection based on note ranges
+  - ✅ Simple text characters for reliable rendering
 
 ### 10. `note_positioning_test.pdf`
 - **Purpose**: Test note positioning within measures
