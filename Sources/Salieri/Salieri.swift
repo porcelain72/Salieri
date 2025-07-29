@@ -1101,7 +1101,7 @@ class SalieriPDFRenderer {
         let x = xBase
       //  let y = yBase// + notehead.y
       //  let y =  notehead.y
-        let y = yBase + 72 + notehead.y
+        let y = yBase + notehead.y
         // Debug: Check rendering Y position calculation
         print("Rendering Y position debug:")
         print("  yBase: \(yBase)")
