@@ -106,6 +106,8 @@ struct SalieriScore {
         let beatsPerMeasure = { (ts: SalieriTimeSignature) in Double(ts.numerator) }
         
         var lastNoteEnd: MusicTimeStamp = 0.0
+        var currentMeasureDuration: Double = 0.0 // Track cumulative duration in current measure
+        
         var hasEvent: DarwinBoolean = false
         MusicEventIteratorHasCurrentEvent(eventIterator, &hasEvent)
         while hasEvent.boolValue {
@@ -121,24 +123,40 @@ struct SalieriScore {
                 if restDuration > 0.0 {
                     let rest = SalieriRest(duration: .custom(restDuration))
                     currentEvents.append(.rest(rest))
+                    currentMeasureDuration += restDuration
                 }
             }
             
             // Map event to SalieriEvent
             if let event = mapEvent(eventType: eventType, eventData: eventData, timeStamp: timeStamp) {
-                // Check if event crosses measure boundary
-                let beatInMeasure = timeStamp - currentMeasureStartBeat
-                if beatInMeasure >= beatsPerMeasure(currentTimeSignature) {
+                // Check if adding this event would exceed the measure's beat count
+                let eventDuration: Double
+                switch event {
+                case .note(let note):
+                    eventDuration = note.duration.fractionOfWhole
+                case .rest(let rest):
+                    eventDuration = rest.duration.fractionOfWhole
+                default:
+                    eventDuration = 0.0 // Time signatures, clefs, etc. don't consume beats
+                }
+                
+                // If adding this event would exceed the measure, start a new measure
+                if currentMeasureDuration + eventDuration > beatsPerMeasure(currentTimeSignature) {
                     measures.append(SalieriMeasure(number: currentMeasureNumber, events: currentEvents))
                     currentMeasureNumber += 1
                     currentEvents = []
+                    currentMeasureDuration = 0.0
                     currentMeasureStartBeat += beatsPerMeasure(currentTimeSignature)
                 }
+                
                 currentEvents.append(event)
+                currentMeasureDuration += eventDuration
+                
                 // Update time signature if event is a time signature
                 if case let .timeSignature(ts) = event {
                     currentTimeSignature = ts
                 }
+                
                 // Track note end for rest detection
                 if case let .note(note) = event {
                     lastNoteEnd = timeStamp + note.duration.fractionOfWhole
@@ -148,9 +166,11 @@ struct SalieriScore {
             MusicEventIteratorNextEvent(eventIterator)
             MusicEventIteratorHasCurrentEvent(eventIterator, &hasEvent)
         }
+        
         if !currentEvents.isEmpty {
             measures.append(SalieriMeasure(number: currentMeasureNumber, events: currentEvents))
         }
+        
         return measures
     }
     
@@ -405,7 +425,7 @@ class SalieriEngraver {
         let systemsPerPage = max(1, Int(availableHeight / (systemHeight + systemSpacing)))
         
         // Calculate measure widths based on content
-        let measureWidths = calculateMeasureWidths(for: score, availableWidth: availableWidth, staffHeight: staffHeight)
+        let measureWidths = calculateMeasureWidths(for: score, availableWidth: availableWidth, staffHeight: staffHeight, staffLineSpacing: staffLineSpacing)
         
         // Group measures into systems
         let systems = groupMeasuresIntoSystems(measureWidths: measureWidths, availableWidth: availableWidth)
@@ -441,12 +461,17 @@ class SalieriEngraver {
                         partMeasures = []
                     }
                     
-                    var accumulatedWidth: CGFloat = 0
+                    // Calculate stretched measure width for this system
+                    let measuresInSystem = partMeasures.count
+                    let stretchedMeasureWidth = systemWidth / CGFloat(measuresInSystem)
+                    
                     let measures = partMeasures.enumerated().map { (index, measure) in
-                        let measureWidth = measureWidths[measureStart + index]
-                        let measureLayout = createMeasureLayout(measure, localMeasureIndex: index, measureWidth: measureWidth, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight, clef: clef)
-                        let positionedMeasure = SalieriMeasureLayout(events: measureLayout.events, xPosition: accumulatedWidth, width: measureWidth, measureNumber: measureLayout.measureNumber)
-                        accumulatedWidth += measureWidth
+                        // Use stretched measure width for note positioning to ensure proper beat-based layout
+                        // isFirstMeasure should be true for the first measure in each system (index == 0)
+                        let measureLayout = createMeasureLayout(measure, localMeasureIndex: index, measureWidth: stretchedMeasureWidth, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight, clef: clef, isFirstMeasure: index == 0)
+                        
+                        let xPosition = CGFloat(index) * stretchedMeasureWidth
+                        let positionedMeasure = SalieriMeasureLayout(events: measureLayout.events, xPosition: xPosition, width: stretchedMeasureWidth, measureNumber: measureLayout.measureNumber)
                         return positionedMeasure
                     }
                     
@@ -467,62 +492,57 @@ class SalieriEngraver {
         return SalieriLayout(pages: pages)
     }
     
-    // Helper: Calculate measure widths based on content
-    private static func calculateMeasureWidths(for score: SalieriScore, availableWidth: CGFloat, staffHeight: CGFloat) -> [CGFloat] {
+    // Helper: Calculate measure widths using the new algorithm
+    private static func calculateMeasureWidths(for score: SalieriScore, availableWidth: CGFloat, staffHeight: CGFloat, staffLineSpacing: CGFloat) -> [CGFloat] {
         let maxMeasures = score.parts.map { $0.measures.count }.max() ?? 0
         var measureWidths: [CGFloat] = []
         
         // Space needed for clef, time signature, and key signature in first measure
-        let clefWidth = staffHeight * 0.9 // Clef width
-        let timeSignatureWidth = staffHeight * 0.8 * 2 // Time signature width (numerator + denominator)
-        let keySignatureWidth = staffHeight * 0.6 * 0 // No key signature for now
-        let firstMeasureMinWidth = clefWidth + timeSignatureWidth + keySignatureWidth + staffHeight * 2.0 // Additional spacing
+        // Use staffLineSpacing for consistent sizing with SMuFL standards
+        let clefWidth = staffLineSpacing * 3.0 // Clef width = 3 staff spaces
+        let timeSignatureWidth = staffLineSpacing * 2.0 * 2 // Time signature width (numerator + denominator) = 2 staff spaces each
+        let keySignatureWidth = staffLineSpacing * 0.0 // No key signature for now
+        let signatureSpacing = staffLineSpacing * 1.0 // Spacing after signatures
+        let firstMeasureExtraWidth = clefWidth + timeSignatureWidth + keySignatureWidth + signatureSpacing
         
-        // Minimum spacing between notes
+        // Calculate notehead minimum size from staffLineSpacing
+        let noteheadMinSize = staffLineSpacing * 0.6 // Base notehead width (SMuFL standard: ~0.6 staff spaces)
         let minNoteSpacing = staffHeight * 0.5
         
+        // Calculate a reasonable minimum measure width based on typical note density
+        // Use 4 notes as a reasonable minimum (4/4 time signature with quarter notes)
+        let typicalNotesPerMeasure = 4
+        let minMeasureWidth = CGFloat(typicalNotesPerMeasure) * noteheadMinSize + CGFloat(typicalNotesPerMeasure + 1) * minNoteSpacing
+        
+        // Calculate available width for measures (system width minus space for clefs/signatures)
+        let availableMeasureWidth = availableWidth - firstMeasureExtraWidth
+        
+        // Determine how many measures can fit in a system
+        let measuresPerSystem = max(1, Int(availableMeasureWidth / minMeasureWidth))
+        
+        // Debug output
+        print("Measure width calculation debug:")
+        print("  typicalNotesPerMeasure: \(typicalNotesPerMeasure)")
+        print("  noteheadMinSize: \(noteheadMinSize)")
+        print("  minNoteSpacing: \(minNoteSpacing)")
+        print("  minMeasureWidth: \(minMeasureWidth)")
+        print("  availableWidth: \(availableWidth)")
+        print("  firstMeasureExtraWidth: \(firstMeasureExtraWidth)")
+        print("  availableMeasureWidth: \(availableMeasureWidth)")
+        print("  measuresPerSystem: \(measuresPerSystem)")
+        
+        // Calculate base measure width by dividing available space by number of measures
+        let baseMeasureWidth = availableMeasureWidth / CGFloat(measuresPerSystem)
+        
+        // Generate measure widths
         for measureIndex in 0..<maxMeasures {
-            var measureWidth: CGFloat = 0
-            
             if measureIndex == 0 {
-                // First measure needs space for clef, time signature, and key signature
-                measureWidth = firstMeasureMinWidth
+                // First measure includes space for clefs and signatures
+                measureWidths.append(baseMeasureWidth + firstMeasureExtraWidth)
+            } else {
+                // Regular measures
+                measureWidths.append(baseMeasureWidth)
             }
-            
-            // Add space for notes in this measure
-            for part in score.parts {
-                if measureIndex < part.measures.count {
-                    let measure = part.measures[measureIndex]
-                    let noteCount = measure.events.compactMap { event in
-                        if case .note(_) = event { return event }
-                        return nil
-                    }.count
-                    
-                    if noteCount > 0 {
-                        let noteSpacing = minNoteSpacing * CGFloat(noteCount - 1)
-                        let noteWidths = measure.events.compactMap { event in
-                            if case let .note(note) = event {
-                                return calculateNoteWidth(for: note, staffHeight: staffHeight)
-                            }
-                            return nil
-                        }
-                        let totalNoteWidth = noteWidths.reduce(0, +)
-                        let measureNoteWidth = totalNoteWidth + noteSpacing
-                        
-                        if measureIndex == 0 {
-                            // Add note space after clef/time signature
-                            measureWidth = max(measureWidth, firstMeasureMinWidth + measureNoteWidth)
-                        } else {
-                            // Regular measure width
-                            measureWidth = max(measureWidth, measureNoteWidth)
-                        }
-                    }
-                }
-            }
-            
-            // Ensure minimum width
-            measureWidth = max(measureWidth, staffHeight * 3.0)
-            measureWidths.append(measureWidth)
         }
         
         return measureWidths
@@ -537,24 +557,32 @@ class SalieriEngraver {
             var systemWidth: CGFloat = 0
             var measuresInSystem = 0
             
-            // Try to fit as many measures as possible in this system
+            // Try to fit as many complete measures as possible in this system
             while currentMeasure + measuresInSystem < measureWidths.count {
                 let nextMeasureWidth = measureWidths[currentMeasure + measuresInSystem]
+                
+                // Check if adding this measure would exceed available width
                 if systemWidth + nextMeasureWidth <= availableWidth {
                     systemWidth += nextMeasureWidth
                     measuresInSystem += 1
                 } else {
+                    // If we can't fit this measure, stop here
+                    // Don't break measures - ensure systems contain whole measures only
                     break
                 }
             }
             
-            // Ensure we have at least one measure
+            // If we couldn't fit any measures in this system, force at least one
+            // This handles the case where a single measure is wider than the available width
             if measuresInSystem == 0 {
                 measuresInSystem = 1
                 systemWidth = measureWidths[currentMeasure]
             }
             
-            systems.append((startIndex: currentMeasure, endIndex: currentMeasure + measuresInSystem, systemWidth: systemWidth))
+            // Stretch measures to fill the available width evenly
+            // This ensures systems look balanced and professional
+            let stretchedSystemWidth = availableWidth
+            systems.append((startIndex: currentMeasure, endIndex: currentMeasure + measuresInSystem, systemWidth: stretchedSystemWidth))
             currentMeasure += measuresInSystem
         }
         
@@ -592,7 +620,7 @@ class SalieriEngraver {
     }
     
     // Helper: Create measure layout with proper note positioning
-    private static func createMeasureLayout(_ measure: SalieriMeasure, localMeasureIndex: Int, measureWidth: CGFloat, staffLineSpacing: CGFloat, staffHeight: CGFloat, clef: SalieriClef) -> SalieriMeasureLayout {
+    private static func createMeasureLayout(_ measure: SalieriMeasure, localMeasureIndex: Int, measureWidth: CGFloat, staffLineSpacing: CGFloat, staffHeight: CGFloat, clef: SalieriClef, isFirstMeasure: Bool = false) -> SalieriMeasureLayout {
         let notesPerBeamGroup = 2
         var beamGroup = 0
         var beamCount = 0
@@ -623,7 +651,7 @@ class SalieriEngraver {
                 let stemDirection: SalieriStemDirection = y > staffHeight / 2 ? .up : .down
                 
                 // Calculate horizontal position within the measure
-                let xPosition = calculateNotePosition(for: note, measureIndex: eIdx, measureWidth: measureWidth, totalNotes: measure.events.count, isFirstMeasure: localMeasureIndex == 0, staffHeight: staffHeight)
+                let xPosition = calculateNotePosition(for: note, measureIndex: eIdx, measureWidth: measureWidth, totalNotes: measure.events.count, isFirstMeasure: isFirstMeasure, staffHeight: staffHeight, staffLineSpacing: staffLineSpacing)
                 
                 return SalieriNotehead(note: note, x: xPosition, y: y, accidental: accidental, ledgerLines: ledgerLines, stemDirection: stemDirection, beamGroup: group)
             }
@@ -633,28 +661,59 @@ class SalieriEngraver {
         return SalieriMeasureLayout(events: events, xPosition: 0, width: measureWidth, measureNumber: measure.number)
     }
     
-    // Helper: Calculate note position within a measure
-    private static func calculateNotePosition(for note: SalieriNote, measureIndex: Int, measureWidth: CGFloat, totalNotes: Int, isFirstMeasure: Bool = false, staffHeight: CGFloat) -> CGFloat {
-        // Calculate the starting position by accumulating widths of previous notes
-        var startPosition: CGFloat = 0
+    // Helper: Calculate note position within a measure using n notes and n+1 spaces
+    private static func calculateNotePosition(for note: SalieriNote, measureIndex: Int, measureWidth: CGFloat, totalNotes: Int, isFirstMeasure: Bool = false, staffHeight: CGFloat, staffLineSpacing: CGFloat) -> CGFloat {
+        // Calculate space needed for clef, time signature, and key signature
+        // Use staffLineSpacing for consistency with SMuFL standards
+        let clefWidth = staffLineSpacing * 3.0 // Clef width = 3 staff spaces
+        let timeSignatureWidth = staffLineSpacing * 2.0 * 2 // Time signature width (numerator + denominator) = 2 staff spaces each
+        let keySignatureWidth = staffLineSpacing * 0.0 // No key signature for now
+        let signatureSpacing = staffLineSpacing * 1.0 // Spacing after signatures
+        let signatureSpace = clefWidth + timeSignatureWidth + keySignatureWidth + signatureSpacing
         
-        // If this is the first measure, reserve space for clef, time signature, and key signature
-        if isFirstMeasure {
-            let clefWidth = staffHeight * 0.9
-            let timeSignatureWidth = staffHeight * 0.8 * 2
-            let keySignatureWidth = staffHeight * 0.6 * 0 // No key signature for now
-            let spacing = staffHeight * 1.0
-            startPosition = clefWidth + timeSignatureWidth + keySignatureWidth + spacing
-        }
+        // Calculate available width for notes (measure width minus signature space if first measure)
+        let availableNoteWidth = isFirstMeasure ? measureWidth - signatureSpace : measureWidth
         
         // Calculate note width and spacing
-        _ = calculateNoteWidth(for: note, staffHeight: staffHeight)
-        let minSpacing = staffHeight * 0.5
+        let noteWidth = staffLineSpacing * 0.6 // Note width (SMuFL standard)
+        let noteSpacing = staffHeight * 0.5 // Space between notes
         
-        // Position based on previous notes
-        if measureIndex > 0 {
-            // For now, use simple spacing, but this could be enhanced with proper rhythmic positioning
-            startPosition += minSpacing * CGFloat(measureIndex)
+        // Calculate total space needed: n notes + (n+1) spaces
+        let totalNoteWidth = CGFloat(totalNotes) * noteWidth
+        let totalSpacingWidth = CGFloat(totalNotes + 1) * noteSpacing
+        let totalRequiredWidth = totalNoteWidth + totalSpacingWidth
+        
+        // If total required width exceeds available width, scale down the spacing
+        let actualSpacing = totalRequiredWidth > availableNoteWidth ? 
+            (availableNoteWidth - totalNoteWidth) / CGFloat(totalNotes + 1) : noteSpacing
+        
+        // Calculate starting position
+        var startPosition: CGFloat = 0
+        
+        // If this is the first measure, start after the signature space
+        if isFirstMeasure {
+            startPosition = signatureSpace
+        }
+        
+        // Add initial space
+        startPosition += actualSpacing
+        
+        // Add space for previous notes and their spacing
+        startPosition += CGFloat(measureIndex) * (noteWidth + actualSpacing)
+        
+        // Debug output for note positioning
+        if measureIndex == 0 {
+            print("Note positioning debug for first note in measure:")
+            print("  isFirstMeasure: \(isFirstMeasure)")
+            print("  measureWidth: \(measureWidth)")
+            print("  signatureSpace: \(signatureSpace)")
+            print("  availableNoteWidth: \(availableNoteWidth)")
+            print("  totalNotes: \(totalNotes)")
+            print("  noteWidth: \(noteWidth)")
+            print("  noteSpacing: \(noteSpacing)")
+            print("  totalRequiredWidth: \(totalRequiredWidth)")
+            print("  actualSpacing: \(actualSpacing)")
+            print("  startPosition: \(startPosition)")
         }
         
         return startPosition
@@ -681,29 +740,220 @@ class SalieriEngraver {
     }
     
     // Helper: Calculate vertical position for a pitch on the staff
+    // Y position is relative to the bottom of the staff (yBase)
+    // For notes below the staff, we ADD to yBase
+    // For notes above the staff, we SUBTRACT from yBase
     private static func yForPitch(_ pitch: SalieriPitch, clef: SalieriClef, staffLineSpacing: CGFloat, staffHeight: CGFloat) -> CGFloat {
-        // For treble clef, C4 is one ledger line below staff
-        // Staff lines: 0 (bottom) to 4 (top)
-        // Middle C (C4) is y = staffHeight + staffLineSpacing
         let midiNumber = midiNumberForPitch(pitch)
-        let c4 = 60
-        let offset = midiNumber - c4
-        // Each step is a line or space (up = negative y)
-        let y = staffHeight + staffLineSpacing - CGFloat(offset) * (staffLineSpacing / 2)
-        return y
+        
+        // Calculate the bottom line Y position for comparison
+        let bottomLineY = staffHeight // / 2 // Bottom line is at the center of the staff
+        
+        let noteY: CGFloat
+        switch clef.type {
+        case .treble:
+            noteY = yForPitchTreble(midiNumber: midiNumber, staffLineSpacing: staffLineSpacing)
+        case .bass:
+            noteY = yForPitchBass(midiNumber: midiNumber, staffLineSpacing: staffLineSpacing)
+        default:
+            // For other clef types, use a simple calculation
+            let c4 = 60
+            let offset = midiNumber - c4
+            noteY = CGFloat(offset) * (staffLineSpacing / 2)
+        }
+        
+        // Debug: Compare note Y position with bottom line position
+        print("Note Y position debug:")
+        print("  MIDI number: \(midiNumber)")
+        print("  staffHeight: \(staffHeight)")
+        print("  bottomLineY: \(bottomLineY)")
+        print("  noteY (relative): \(noteY)")
+        print("  final note Y (bottomLineY + noteY): \(bottomLineY + noteY)")
+        
+        // Return only the relative offset - the rendering code will add yBase
+        return noteY
+    }
+    
+    // Treble clef lookup table: MIDI number -> staff position offset
+    // E4 (MIDI 64) is on the bottom line (y = 0)
+    // For notes below E4, we ADD to yBase (positive values)
+    // For notes above E4, we SUBTRACT from yBase (negative values)
+    private static func yForPitchTreble(midiNumber: Int, staffLineSpacing: CGFloat) -> CGFloat {
+        // Debug output for Y position calculation
+        print("Y position calculation debug:")
+        print("  MIDI number: \(midiNumber)")
+        print("  staffLineSpacing: \(staffLineSpacing)")
+        
+        let trebleLookup: [Int: CGFloat] = [
+            // Below staff (ledger lines below)
+            60: 1.0,   // C4 - one ledger lines below
+            61: 1.0,   // C#4 - one  ledger lines below
+            62: 0.5,   // D4 - half ledger line below
+            63: 0.5,   // D#4 - half ledger line below
+            
+            // Staff lines and spaces (bottom to top)
+            64: 0.0,   // E4 - bottom line
+            65: -0.5,  // F4 - bottom space
+            66: -0.5,  // F#4 - bottom space
+            67: -1.0,  // G4 - second line
+            68: -1.0,  // G#4 - second line
+            69: -1.5,  // A4 - second space
+            70: -1.5,  // A#4 - second space
+            71: -2.0,  // B4 - third line
+            72: -2.5,  // C5 - fourth space
+            73: -2.5,  // C#5 - fourth space
+            74: -3.0,  // D5 - fourth line
+            75: -3.0,  // D#5 - fourth line
+            76: -3.5,  // E5 - fourth space
+            77: -4.0,  // F5 - fourth space
+            78: -4.0,  // F#5 -  top line
+            79: -4.5,  // G5 - above top line
+            80: -4.5,  // G#5 - above top line
+            81: -5.0,  // A5 - above top line
+            82: -5.0,  // A#5 - above top line
+            83: -5.5,  // B5 - above top line
+            84: -6.0, // C6 - above top line
+        ]
+        
+        if let multiplier = trebleLookup[midiNumber] {
+            let result = multiplier * staffLineSpacing
+            print("  lookup multiplier: \(multiplier)")
+            print("  calculated Y: \(result)")
+            return result
+        } else {
+            // For notes outside the lookup table, calculate based on distance from E4
+            let e4 = 64
+            let offset = midiNumber - e4
+            let result = CGFloat(offset) * (staffLineSpacing / 2)
+            print("  fallback calculation: offset=\(offset), result=\(result)")
+            return result
+        }
+    }
+    
+    // Bass clef lookup table: MIDI number -> staff position offset
+    // F3 (MIDI 53) is on the bottom line (y = 0)
+    // For notes below F3, we ADD to yBase (positive values)
+    // For notes above F3, we SUBTRACT from yBase (negative values)
+    private static func yForPitchBass(midiNumber: Int, staffLineSpacing: CGFloat) -> CGFloat {
+        let bassLookup: [Int: CGFloat] = [
+            // Below staff (ledger lines below)
+            50: 1.5,   // D3 - one ledger line below
+            51: 1.0,   // D#3 - half space below
+            52: 0.5,   // E3 - half space below
+            
+            // Staff lines and spaces (bottom to top)
+            53: 0.0,   // F3 - bottom line
+            54: -0.5,  // F#3 - bottom space
+            55: -1.0,  // G3 - first line
+            56: -1.5,  // G#3 - first space
+            57: -2.0,  // A3 - second line
+            58: -2.5,  // A#3 - second space
+            59: -3.0,  // B3 - third line
+            60: -3.5,  // C4 - third space
+            61: -4.0,  // C#4 - fourth line
+            62: -4.5,  // D4 - fourth space
+            63: -5.0,  // D#4 - top line
+            64: -5.5,  // E4 - above top line
+            65: -6.0,  // F4 - above top line
+            66: -6.5,  // F#4 - above top line
+            67: -7.0,  // G4 - above top line
+            68: -7.5,  // G#4 - above top line
+            69: -8.0,  // A4 - above top line
+            70: -8.5,  // A#4 - above top line
+            71: -9.0,  // B4 - above top line
+            72: -9.5,  // C5 - above top line
+        ]
+        
+        if let multiplier = bassLookup[midiNumber] {
+            return multiplier * staffLineSpacing
+        } else {
+            // For notes outside the lookup table, calculate based on distance from F3
+            let f3 = 53
+            let offset = midiNumber - f3
+            return CGFloat(offset) * (staffLineSpacing / 2)
+        }
     }
     // Helper: Calculate ledger lines for a pitch
     private static func ledgerLinesForPitch(_ pitch: SalieriPitch, clef: SalieriClef, staffLineSpacing: CGFloat, staffHeight: CGFloat) -> [LedgerLine] {
-        // For now, add a ledger line for every note outside the 5 staff lines
-        let y = yForPitch(pitch, clef: clef, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
+        // Calculate the actual Y position of the note on the staff
+        let noteY = yForPitch(pitch, clef: clef, staffLineSpacing: staffLineSpacing, staffHeight: staffHeight)
+        
         var lines: [LedgerLine] = []
-        if y < 0 { // Above staff
-            let count = Int(abs(y) / (staffLineSpacing / 2) / 2)
-            for i in 0..<count { lines.append(LedgerLine(y: -CGFloat(i+1) * staffLineSpacing, length: staffLineSpacing * 1.5)) }
-        } else if y > staffHeight { // Below staff
-            let count = Int((y - staffHeight) / (staffLineSpacing / 2) / 2)
-            for i in 0..<count { lines.append(LedgerLine(y: staffHeight + CGFloat(i+1) * staffLineSpacing, length: staffLineSpacing * 1.5)) }
+        
+        // For treble clef: D4 (bottom line) to G5 (top line) don't need ledger lines
+        // D4 = MIDI 62, G5 = MIDI 79
+        let midiNumber = midiNumberForPitch(pitch)
+        
+        switch clef.type {
+        case .treble:
+            if midiNumber < 62 { // Below D4 (below bottom line)
+                // Calculate how many ledger lines are needed below the staff
+                let bottomLineY = 0.0 // Bottom line of staff
+                let distanceBelow = bottomLineY - noteY
+                let ledgerCount = max(0, Int(ceil(distanceBelow / staffLineSpacing)))
+                
+                for i in 0..<ledgerCount {
+                    let ledgerLineY = bottomLineY - CGFloat(i + 1) * staffLineSpacing
+                    lines.append(LedgerLine(y: ledgerLineY, length: staffLineSpacing * 1.5))
+                }
+            } else if midiNumber > 79 { // Above G5 (above top line)
+                // Calculate how many ledger lines are needed above the staff
+                // For treble clef: G5 (MIDI 79) is the top line, so notes above need ledger lines
+                // A5 (MIDI 81) should have 1 ledger line, B5 (MIDI 83) should have 2 ledger lines
+                let semitonesAboveG5 = midiNumber - 79
+                let ledgerCount = (semitonesAboveG5 + 1) / 2 // Convert semitones to ledger lines
+                
+                for i in 0..<ledgerCount {
+                    let ledgerLineY = staffHeight + CGFloat(i + 1) * staffLineSpacing
+                    lines.append(LedgerLine(y: ledgerLineY, length: staffLineSpacing * 1.5))
+                }
+            }
+            // Notes from D4 (62) to G5 (79) are within the staff and don't need ledger lines
+            
+        case .bass:
+            // For bass clef: F3 (bottom line) to A4 (top line) don't need ledger lines
+            // F3 = MIDI 53, A4 = MIDI 69
+            if midiNumber < 53 { // Below F3 (below bottom line)
+                let bottomLineY = 0.0
+                let distanceBelow = bottomLineY - noteY
+                let ledgerCount = max(0, Int(ceil(distanceBelow / staffLineSpacing)))
+                
+                for i in 0..<ledgerCount {
+                    let ledgerLineY = bottomLineY - CGFloat(i + 1) * staffLineSpacing
+                    lines.append(LedgerLine(y: ledgerLineY, length: staffLineSpacing * 1.5))
+                }
+            } else if midiNumber > 69 { // Above A4 (above top line)
+                let topLineY = staffHeight
+                let distanceAbove = noteY - topLineY
+                let ledgerCount = max(0, Int(ceil(distanceAbove / staffLineSpacing)))
+                
+                for i in 0..<ledgerCount {
+                    let ledgerLineY = topLineY + CGFloat(i + 1) * staffLineSpacing
+                    lines.append(LedgerLine(y: ledgerLineY, length: staffLineSpacing * 1.5))
+                }
+            }
+            // Notes from F3 (53) to A4 (69) are within the staff and don't need ledger lines
+            
+        default:
+            // For other clef types, use a simple range check
+            if noteY < 0 || noteY > staffHeight {
+                // Calculate ledger lines based on actual position
+                if noteY < 0 { // Above staff
+                    let ledgerCount = max(0, Int(ceil(abs(noteY) / staffLineSpacing)))
+                    for i in 0..<ledgerCount {
+                        let ledgerLineY = -CGFloat(i + 1) * staffLineSpacing
+                        lines.append(LedgerLine(y: ledgerLineY, length: staffLineSpacing * 1.5))
+                    }
+                } else { // Below staff
+                    let ledgerCount = max(0, Int(ceil((noteY - staffHeight) / staffLineSpacing)))
+                    for i in 0..<ledgerCount {
+                        let ledgerLineY = staffHeight + CGFloat(i + 1) * staffLineSpacing
+                        lines.append(LedgerLine(y: ledgerLineY, length: staffLineSpacing * 1.5))
+                    }
+                }
+            }
         }
+        
         return lines
     }
     // Helper: MIDI number for pitch
@@ -713,6 +963,11 @@ class SalieriEngraver {
         let step = stepToInt[pitch.step] ?? 0
         let alter = Int((pitch.alter ?? 0).rounded())
         return base + step + alter
+    }
+    
+    // Helper: Calculate semitone offset from Middle C (C4)
+    private static func semitoneOffsetFromC4(_ pitch: SalieriPitch) -> Int {
+        return midiNumberForPitch(pitch) - 60 // C4 = MIDI 60
     }
 }
 
@@ -775,12 +1030,14 @@ class SalieriPDFRenderer {
         // Draw clef and time signature within the first measure
         if let firstMeasure = staff.measures.first {
             let firstMeasureX = config.margins.left + firstMeasure.xPosition
-            let clefX = firstMeasureX + config.staffSize * 2.0 + staffHeight * 0.2 // Position clef within first measure, spaced half a note width to the right
+            
+            // Position clef and time signature to match the calculated gap (96.0pt)
+            let clefX = firstMeasureX + staffLineSpacing * 1.0 // 1 staff space from measure start
             let clefY = yBase + staffHeight / 2 // Center clef vertically on staff
             drawClef(staff.clef, at: CGPoint(x: clefX, y: clefY), context: context, config: config)
             
-            // Draw time signature after clef within first measure
-            let timeSigX = clefX + config.staffSize * 4.0 // Position after clef
+            // Draw time signature after clef (clef width = 3 staff spaces)
+            let timeSigX = clefX + staffLineSpacing * 3.0 // Position after clef width
             let timeSigY = yBase + staffHeight / 2
             drawTimeSignature(firstMeasure, at: CGPoint(x: timeSigX, y: timeSigY), context: context, config: config)
         }
@@ -842,7 +1099,14 @@ class SalieriPDFRenderer {
     
     private static func drawNotehead(_ notehead: SalieriNotehead, xBase: CGFloat, yBase: CGFloat, context: CGContext, config: SalieriConfiguration) {
         let x = xBase
-        let y = yBase + notehead.y
+      //  let y = yBase// + notehead.y
+      //  let y =  notehead.y
+        let y = yBase + 72 + notehead.y
+        // Debug: Check rendering Y position calculation
+        print("Rendering Y position debug:")
+        print("  yBase: \(yBase)")
+        print("  notehead.y (relative): \(notehead.y)")
+        print("  final rendering Y: \(y)")
         
         // Calculate staff height for proper scaling
         let staffLineSpacing: CGFloat = config.staffSize * 1.0
